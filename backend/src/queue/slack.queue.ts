@@ -57,6 +57,10 @@ export function startSlackWorker(): Worker<SlackAlertData> {
       logger.info({ jobId: job.id }, 'Slack alert sent successfully');
     });
 
+    slackWorker.on('error', (err) => {
+      logger.warn({ err: err.message }, 'Slack worker Redis connection notice');
+    });
+
     slackWorker.on('failed', (job, err) => {
       logger.error({ jobId: job?.id, err: err.message }, 'Slack alert failed');
     });

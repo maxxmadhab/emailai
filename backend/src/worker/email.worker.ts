@@ -58,6 +58,10 @@ export class EmailWorker {
       logger.info({ jobId: job.id, emailId: job.data.emailId }, 'Job completed successfully');
     });
 
+    this.worker.on('error', (err) => {
+      logger.warn({ err: err.message }, 'Email worker Redis connection notice');
+    });
+
     this.worker.on('failed', (job, err) => {
       logger.error({ jobId: job?.id, emailId: job?.data.emailId, err: err.message }, 'Job failed');
     });

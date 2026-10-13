@@ -14,8 +14,7 @@ export function getRedis(): Redis {
       maxRetriesPerRequest: null, // Required by BullMQ
       connectTimeout: 1500,
       retryStrategy: (times) => {
-        if (times > 3) return null; // stop reconnecting after 3 attempts during disconnect
-        return Math.min(times * 200, 1000);
+        return Math.min(times * 500, 5000);
       },
       lazyConnect: true,
     });
