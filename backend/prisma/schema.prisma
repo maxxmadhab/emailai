@@ -1,0 +1,153 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id               String            @id @default(uuid()) @db.Uuid
+  email            String            @unique
+  name             String?
+  avatar_url       String?
+  created_at       DateTime          @default(now())
+  updated_at       DateTime          @updatedAt
+
+  senders          Sender[]
+  campaigns        Campaign[]
+  emails           Email[]
+  idempotency_keys IdempotencyKey[]
+  slack_connection SlackConnection?
+
+  @@map("users")
+}
+
+model Sender {
+  id                 String     @id @default(uuid()) @db.Uuid
+  user_id            String     @db.Uuid
+  name               String
+  email              String
+  host               String
+  port               Int
+  secure             Boolean    @default(false)
+  encrypted_username String     @db.Text
+  encrypted_password String     @db.Text
+  hourly_limit       Int        @default(50)
+  status             String     @default("active") // active, invalid, rate_limited
+  created_at         DateTime   @default(now())
+  updated_at         DateTime   @updatedAt
+
+  user               User       @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  campaigns          Campaign[]
+  emails             Email[]
+
+  @@index([user_id])
+  @@index([email])
+  @@map("senders")
+}
+
+model Campaign {
+  id              String    @id @default(uuid()) @db.Uuid
+  user_id         String    @db.Uuid
+  sender_id       String    @db.Uuid
+  name            String?
+  subject         String
+  body            String    @db.Text
+  delay_seconds   Int       @default(2)
+  hourly_limit    Int       @default(50)
+  status          String    @default("active")
+  idempotency_key String?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  user            User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  sender          Sender    @relation(fields: [sender_id], references: [id], onDelete: Cascade)
+  emails          Email[]
+
+  @@unique([user_id, idempotency_key])
+  @@index([user_id])
+  @@index([sender_id])
+  @@map("campaigns")
+}
+
+model Email {
+  id           String    @id @default(uuid()) @db.Uuid
+  campaign_id  String    @db.Uuid
+  user_id      String    @db.Uuid
+  sender_id    String    @db.Uuid
+  recipient    String
+  subject      String
+  body         String    @db.Text
+  status       String    @default("scheduled") // scheduled, processing, sent, failed, cancelled
+  scheduled_at DateTime
+  sent_at      DateTime?
+  message_id   String?
+  preview_url  String?
+  error        String?   @db.Text
+  attempts     Int       @default(0)
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+
+  campaign     Campaign  @relation(fields: [campaign_id], references: [id], onDelete: Cascade)
+  user         User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  sender       Sender    @relation(fields: [sender_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([sender_id])
+  @@index([status])
+  @@index([scheduled_at])
+  @@index([campaign_id])
+  @@map("emails")
+}
+
+model OutboxEvent {
+  id             String    @id @default(uuid()) @db.Uuid
+  event_type     String
+  aggregate_type String
+  aggregate_id   String
+  payload        Json
+  dedupe_key     String    @unique
+  status         String    @default("pending") // pending, published, failed
+  created_at     DateTime  @default(now())
+  published_at   DateTime?
+
+  @@index([status])
+  @@index([created_at])
+  @@map("outbox_events")
+}
+
+model IdempotencyKey {
+  id              String    @id @default(uuid()) @db.Uuid
+  user_id         String    @db.Uuid
+  key             String
+  request_hash    String
+  response_status Int?
+  response_body   Json?
+  created_at      DateTime  @default(now())
+  expires_at      DateTime
+
+  user            User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, key])
+  @@map("idempotency_keys")
+}
+
+model SlackConnection {
+  id                         String   @id @default(uuid()) @db.Uuid
+  user_id                    String   @unique @db.Uuid
+  team_id                    String
+  team_name                  String
+  channel_id                 String?
+  channel_name               String?
+  encrypted_access_token     String   @db.Text
+  encrypted_incoming_webhook String?  @db.Text
+  status                     String   @default("active")
+  created_at                 DateTime @default(now())
+  updated_at                 DateTime @updatedAt
+
+  user                       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("slack_connections")
+}
