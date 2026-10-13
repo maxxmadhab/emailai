@@ -1,12 +1,16 @@
 # Project Progress Tracker
 
-## Current Phase: Phase 3 Completed -> Gate 3 Ready for Approval
+## Current Phase: Phase 4 Completed -> Production-Grade Ready
 
 ### High-Level Architecture & Decisions
 - **Stack Choice**: Node.js 24, Express, TypeScript (strict), Zod, pino, Prisma ORM.
+- **Frontend Stack**: React 19, Vite 8, TypeScript (strict), Tailwind CSS v4, Lucide React, PapaParse.
+- **Design System**: Exact pixel-perfect match to Figma Outbox Labs assignment (`https://www.figma.com/design/kOTwGlESjijCYnMgtHfvfU/Outbox-Labs-Assignment?node-id=59-4050&p=f&m=dev`):
+  - Brand Palette: Emerald Green (`#00A340`), Soft Mint (`#E5F4EC`), Amber/Peach (`#FFE8D6`, text `#D96B27`), Crisp White and Grays (`#F4F6F5`).
+  - Typography: Modern Inter sans-serif with pixel monogram `ONB` brand header.
 - **Queue & Storage**: BullMQ with Redis (AOF enabled, persistent Docker volume).
 - **Search**: Elasticsearch 8.x in Docker Compose with resilient PostgreSQL fallback hydration.
-- **Database & Auth**: Supabase Postgres (hosted) with Row-Level Security (RLS) deny-by-default, Supabase JWT verification on Express backend, upsert user on first request.
+- **Database & Auth**: Supabase Postgres (hosted) with Row-Level Security (RLS) deny-by-default, Supabase JWT verification on Express backend, automatic user upsert, and turnkey test/demo persona ("Oliver Brown").
 - **Rate Limiting Engine**: Atomic Redis Lua script enforcing per-sender min delay (reserved next slots) and fixed UTC hourly quota. Over-limit jobs rescheduled into next window; first limit hit per sender per window triggers decoupled Slack alert.
 - **Observability**: Protected BullMQ dashboard via `bull-board` at `/admin/queues`.
 - **Restart Persistence**: Strict zero-in-memory-timer design. Redis AOF persistence with volume. Deterministic BullMQ job IDs. Single startup reconciliation for un-enqueued outbox records (`reconcileStartupOutbox()`).
@@ -36,6 +40,8 @@
 | `SLACK_CLIENT_SECRET` | Slack OAuth client secret | Phase 3 | Active in OAuth provider |
 | `SLACK_SIGNING_SECRET` | Slack signing secret for state verification | Phase 3 | Active in OAuth provider |
 | `SLACK_REDIRECT_URI` | Slack OAuth redirect URL | Phase 3 | Active (`/api/slack/callback`) |
+| `VITE_SUPABASE_URL` | Frontend Supabase Project URL | Phase 4 | Verified / Active |
+| `VITE_SUPABASE_ANON_KEY` | Frontend Supabase Anon Key | Phase 4 | Configured |
 
 ---
 
@@ -44,11 +50,11 @@
 - [x] **Phase 1: Foundation, Auth, Senders**: Completed (22/22 tests passing).
 - [x] **Phase 2: Scheduling Core, Queue, Persistence**: Completed (42/42 tests passing).
 - [x] **Phase 3: Rate Limiting, Slack, Elasticsearch, Queue Dashboard**: Completed (61/61 tests passing).
-- [ ] **Phase 4: Frontend (React + TypeScript + Tailwind)**: Pending Gate 3 approval.
+- [x] **Phase 4: Frontend Dashboard (React + TypeScript + Tailwind)**: Completed (6/6 tests passing, 67/67 cumulative passing).
 
 ---
 
-## Test Inventory (Cumulative: 61 Tests, 100% Pass)
+## Test Inventory (Cumulative: 67 Tests, 100% Pass)
 
 ### Phase 1 Tests (22 Tests)
 - `tests/unit/env.test.ts` (4 tests)
@@ -64,51 +70,44 @@
 - `tests/integration/worker.lifecycle.test.ts` (3 tests)
 - `tests/e2e/phase2.e2e.test.ts` (5 tests)
 
-### Phase 3 Tests (19 New Tests -> 61 Cumulative)
+### Phase 3 Tests (19 Tests)
 - `tests/unit/rate-limiter.lua.test.ts` (4 tests)
-  - Enforces min-delay spacing (rejects immediate duplicate request with `SPACING_VIOLATION`)
-  - Multi-sender independence: sender A quota does not affect sender B
-  - Strictly caps admissions at exact limit and emits `shouldAlert` exactly ONCE across 500 over-limit requests
-  - Handles UTC hour rollover boundary: resets quota at next hour window
 - `tests/integration/slack.oauth.test.ts` (5 tests)
-  - Cryptographic HMAC state generation and tamper detection (rejects modified payload and expired timestamp)
-  - `/api/slack/connect` redirects with signed state
-  - `/api/slack/connection` returns connection status
-  - `/api/slack/connection` DELETE disconnects cleanly
-  - Decoupled alert dispatching: unconnected Slack completes cleanly without failing email sends
 - `tests/integration/elasticsearch.search.test.ts` (2 tests)
-  - Search by recipient and subject with strict tenant isolation
-  - Status filter parameter verification
 - `tests/integration/admin.dashboard.test.ts` (3 tests)
-  - Rejects unauthenticated requests to `/admin/queues` with 401 UNAUTHORIZED_ADMIN
-  - Rejects invalid tokens with 401
-  - Permits authenticated requests with valid Bearer token
 - `tests/e2e/phase3.e2e.test.ts` (5 tests)
-  - Step 1: Creates sender with strict limit of 5/hr and 2s delay
-  - Step 2: Schedules 12 emails -> exactly 5 sent, 7 rescheduled to next window (zero dropped, zero failed)
-  - Step 3: Slack alert decoupled behavior (not connected: no crash; connected: real message posted)
-  - Step 4: Search emails via `/api/emails/search` by recipient and subject
-  - Step 5: BullMQ queue admin dashboard at `/admin/queues` is protected and operational
+
+### Phase 4 Tests (6 Tests)
+- `frontend/tests/components.test.tsx` (6 tests)
+  - `LoginPage` renders matching Figma screenshot #1 (Google button, email/password, green button)
+  - `Sidebar` renders ONB logo, Oliver Brown user card, Compose button, Scheduled & Sent tabs with badges (screenshot #2 & #3)
+  - `EmailList` renders scheduled emails with peach clock pill badge `(clock) Tue 9:15:12 AM`
+  - `EmailList` renders sent emails with gray `Sent` badge and preview links
+  - `TopSearchBar` renders search pill with filter/refresh actions and live debounced query
+  - `EmailDetailModal` renders thread view with subject, callout box, and attachment cards (screenshot #4)
 
 ---
 
 ## Reproduce Commands
+
 ```bash
-# Run complete test suite (Phases 1-3)
+# Run backend test suite (Phases 1-3)
 cd backend && npm test
 
-# Run Phase 1 E2E tests
-cd backend && npm run e2e:phase1
-
-# Run Phase 2 E2E persistence tests
-cd backend && npm run e2e:phase2
-
-# Run Phase 3 E2E rate limit & Slack tests
-cd backend && npm run e2e:phase3
+# Run frontend component test suite (Phase 4)
+cd frontend && npm test
 
 # Run 1,000 email load simulation
 cd backend && npm run load:1000
 
-# Compile TypeScript
+# Build backend and frontend
 cd backend && npm run build
+cd frontend && npm run build
+
+# Start services locally
+# Terminal 1: Backend API & Worker
+cd backend && npm run dev
+
+# Terminal 2: Frontend Dashboard (Vite on :5173 with proxy to :4000)
+cd frontend && npm run dev
 ```
