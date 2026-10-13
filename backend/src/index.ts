@@ -2,6 +2,8 @@ import { createApp } from './app.js';
 import { getEnv } from './config/env.js';
 import { logger } from './lib/logger.js';
 import { getPrisma } from './lib/prisma.js';
+import { emailWorker } from './worker/email.worker.js';
+import { outboxDispatcherService } from './services/outbox-dispatcher.service.js';
 
 async function bootstrap() {
   const env = getEnv();
@@ -16,14 +18,39 @@ async function bootstrap() {
     logger.error({ err }, 'Failed to connect to PostgreSQL database on startup');
   }
 
+  // 1. One-time startup outbox recovery reconciliation
+  try {
+    await outboxDispatcherService.reconcileStartupOutbox();
+  } catch (reconcileErr) {
+    logger.error({ err: reconcileErr }, 'Startup outbox reconciliation error');
+  }
+
+  // 2. Start BullMQ background worker
+  try {
+    emailWorker.start();
+  } catch (workerErr) {
+    logger.error({ err: workerErr }, 'Failed to start BullMQ email worker');
+  }
+
   const server = app.listen(env.PORT, () => {
     logger.info(`Server listening on port ${env.PORT} in ${env.NODE_ENV} mode`);
   });
 
   const shutdown = async (signal: string) => {
     logger.info(`${signal} received, starting graceful shutdown`);
+
+    // 1. Stop receiving new HTTP requests
     server.close(async () => {
       logger.info('HTTP server closed');
+
+      // 2. Close BullMQ worker gracefully (waits for active jobs to finish)
+      try {
+        await emailWorker.close();
+      } catch (err) {
+        logger.error({ err }, 'Error during worker shutdown');
+      }
+
+      // 3. Disconnect Prisma
       try {
         const prisma = getPrisma();
         await prisma.$disconnect();
@@ -31,6 +58,7 @@ async function bootstrap() {
       } catch (err) {
         logger.error({ err }, 'Error during Prisma disconnect');
       }
+
       process.exit(0);
     });
   };

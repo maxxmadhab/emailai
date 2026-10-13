@@ -4,6 +4,8 @@ import helmet from 'helmet';
 import healthRoutes from './routes/health.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import senderRoutes from './routes/sender.routes.js';
+import campaignRoutes from './routes/campaign.routes.js';
+import emailRoutes from './routes/email.routes.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
 export function createApp(): Express {
@@ -18,7 +20,7 @@ export function createApp(): Express {
     })
   );
 
-  // Body parsing
+  // Body parsing (note: multipart forms handled by multer per route)
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true }));
 
@@ -26,6 +28,8 @@ export function createApp(): Express {
   app.use('/health', healthRoutes);
   app.use('/api/auth', authRoutes);
   app.use('/api/senders', senderRoutes);
+  app.use('/api/campaigns', campaignRoutes);
+  app.use('/api/emails', emailRoutes);
 
   // Fallback 404
   app.use((_req, res) => {

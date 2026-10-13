@@ -8,7 +8,8 @@
     "build:backend": "npm --prefix backend run build",
     "test:backend": "npm --prefix backend test",
     "test:all": "npm --prefix backend run test:all",
-    "e2e:phase1": "npm --prefix backend run e2e:phase1"
+    "e2e:phase1": "npm --prefix backend run e2e:phase1",
+    "e2e:phase2": "npm --prefix backend run e2e:phase2"
   },
   "workspaces": [
     "backend"

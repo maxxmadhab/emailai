@@ -121,8 +121,17 @@ npm run ethereal:create
 
 ---
 
+## 📬 Ambiguous-SMTP Strategy & Reliability Guarantees
+- **At-Least-Once Target**: Distributed SMTP delivery cannot offer strict exactly-once semantics because a server or network failure can occur after SMTP server accept (`250 OK`) but before local database confirmation.
+- **Deterministic Message-ID**: For every scheduled email, the system assigns a deterministic `Message-ID: <emailId@reachinbox.outbox.ai>` derived from the email UUID prior to dispatch.
+- **Crash Recovery**: When a worker crashes mid-transmission, recovery processes observe `attempts > 0` and inspect the deterministic Message-ID against outbox events to prevent re-sending duplicates.
+- **Transactional Outbox**: All campaign insertions, email records, and outbox events occur in ONE database transaction. Delayed BullMQ jobs are dispatched asynchronously and marked published upon confirmation.
+- **Restart Persistence**: No in-memory JavaScript timers or periodic DB polling loops. Jobs persist in Redis AOF storage with deterministic job IDs (`email:<emailId>`). A single one-time reconciliation at boot recovers any un-published outbox records.
+
+---
+
 ## 📋 Phase Roadmap
-- [x] **Phase 1: Foundation, Auth, Senders** (Completed)
-- [ ] **Phase 2: Scheduling Core, Queue, Persistence** (Ready to begin)
-- [ ] **Phase 3: Rate Limiting, Slack, Elasticsearch, Queue Dashboard**
+- [x] **Phase 1: Foundation, Auth, Senders** (Completed, 22 tests)
+- [x] **Phase 2: Scheduling Core, Queue, Persistence** (Completed, 42 tests)
+- [ ] **Phase 3: Rate Limiting, Slack, Elasticsearch, Queue Dashboard** (Next)
 - [ ] **Phase 4: Frontend (React + TypeScript + Tailwind)**
