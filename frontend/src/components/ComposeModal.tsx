@@ -188,6 +188,8 @@ export const ComposeModal: React.FC<ComposeModalProps> = ({
     }
   };
 
+  const safeSenders = Array.isArray(senders) ? senders : [];
+
   return (
     <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
       <div className="w-full max-w-3xl bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden max-h-[92vh] border border-gray-100 animate-in fade-in zoom-in-95 duration-150">
@@ -338,12 +340,12 @@ export const ComposeModal: React.FC<ComposeModalProps> = ({
                 onChange={(e) => setSelectedSenderId(e.target.value)}
                 className="h-7 px-3 pr-7 rounded-full bg-[#F4F6F5] text-xs font-medium text-gray-800 border-0 focus:outline-none appearance-none cursor-pointer"
               >
-                {senders.map((s) => (
+                {safeSenders.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.email}
                   </option>
                 ))}
-                {senders.length === 0 && (
+                {safeSenders.length === 0 && (
                   <option value="">oliver.brown@domain.io (Default)</option>
                 )}
               </select>

@@ -82,7 +82,8 @@ export const api = {
 
   // Senders
   async getSenders(): Promise<Sender[]> {
-    return request<Sender[]>('/api/senders');
+    const res = await request<any>('/api/senders');
+    return Array.isArray(res) ? res : res?.items || [];
   },
 
   async createSender(payload: {
@@ -131,22 +132,26 @@ export const api = {
 
   // Emails
   async getScheduledEmails(): Promise<Email[]> {
-    return request<Email[]>('/api/emails/scheduled');
+    const res = await request<any>('/api/emails/scheduled');
+    return Array.isArray(res) ? res : res?.items || [];
   },
 
   async getSentEmails(): Promise<Email[]> {
-    return request<Email[]>('/api/emails/sent');
+    const res = await request<any>('/api/emails/sent');
+    return Array.isArray(res) ? res : res?.items || [];
   },
 
   async getFailedEmails(): Promise<Email[]> {
-    return request<Email[]>('/api/emails/failed');
+    const res = await request<any>('/api/emails/failed');
+    return Array.isArray(res) ? res : res?.items || [];
   },
 
   async searchEmails(query: string, status?: string): Promise<Email[]> {
     const params = new URLSearchParams();
     if (query) params.set('q', query);
     if (status) params.set('status', status);
-    return request<Email[]>(`/api/emails/search?${params.toString()}`);
+    const res = await request<any>(`/api/emails/search?${params.toString()}`);
+    return Array.isArray(res) ? res : res?.items || [];
   },
 
   async cancelEmail(emailId: string): Promise<Email> {

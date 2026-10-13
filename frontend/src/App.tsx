@@ -56,9 +56,9 @@ export const App: React.FC = () => {
         api.getSentEmails().catch(() => []),
         api.getSenders().catch(() => []),
       ]);
-      setScheduledEmails(sched);
-      setSentEmails(sent);
-      setSenders(snd);
+      setScheduledEmails(Array.isArray(sched) ? sched : (sched as any)?.items || []);
+      setSentEmails(Array.isArray(sent) ? sent : (sent as any)?.items || []);
+      setSenders(Array.isArray(snd) ? snd : (snd as any)?.items || []);
     } finally {
       setLoadingData(false);
     }
@@ -114,8 +114,20 @@ export const App: React.FC = () => {
     }
   };
 
+  // If checking authentication session on initial mount
+  if (loadingUser) {
+    return (
+      <div className="min-h-screen w-full flex items-center justify-center bg-white">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-[#00A340] border-t-transparent rounded-full animate-spin"></div>
+          <span className="text-xs text-gray-400 font-medium">Loading session...</span>
+        </div>
+      </div>
+    );
+  }
+
   // If user is not logged in, render the Figma Login Page
-  if (!user && !loadingUser) {
+  if (!user) {
     return <LoginPage onLoginSuccess={(loggedInUser) => setUser(loggedInUser)} />;
   }
 

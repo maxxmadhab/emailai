@@ -69,15 +69,15 @@ export const EmailDetailModal: React.FC<EmailDetailModalProps> = ({
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-full bg-[#00A340] text-white font-semibold text-sm flex items-center justify-center">
-              {email.recipient.charAt(0).toUpperCase()}
+              {(email.recipient || 'U').charAt(0).toUpperCase()}
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-sm font-semibold text-gray-900">
-                  {email.recipient.split('@')[0]}
+                  {(email.recipient || 'user@example.com').split('@')[0]}
                 </span>
                 <span className="text-xs text-gray-400">
-                  &lt;{email.recipient}&gt;
+                  &lt;{email.recipient || 'user@example.com'}&gt;
                 </span>
               </div>
               <div className="flex items-center gap-1 text-[11px] text-gray-500">

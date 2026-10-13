@@ -14,6 +14,7 @@ export const SendersModal: React.FC<SendersModalProps> = ({
   onRefreshSenders,
   onBack,
 }) => {
+  const safeSenders = Array.isArray(senders) ? senders : [];
   const [slack, setSlack] = useState<SlackConnection>({ connected: false });
 
   // New sender form state
@@ -308,7 +309,7 @@ export const SendersModal: React.FC<SendersModalProps> = ({
 
           {/* Senders Cards */}
           <div className="space-y-3">
-            {senders.map((s) => (
+            {safeSenders.map((s) => (
               <div
                 key={s.id}
                 className="p-4 rounded-xl border border-gray-200 bg-white flex items-center justify-between hover:border-gray-300 transition"
@@ -335,7 +336,7 @@ export const SendersModal: React.FC<SendersModalProps> = ({
               </div>
             ))}
 
-            {senders.length === 0 && (
+            {safeSenders.length === 0 && (
               <div className="p-8 text-center border border-dashed border-gray-200 rounded-xl text-gray-400 text-xs">
                 No senders connected yet. Click "Add Sender" above to configure your outreach mailbox.
               </div>

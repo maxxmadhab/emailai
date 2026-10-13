@@ -33,6 +33,8 @@ export const EmailList: React.FC<EmailListProps> = ({
   onCancelEmail,
   tab,
 }) => {
+  const safeEmails = Array.isArray(emails) ? emails : [];
+
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center p-12 text-gray-400 text-xs">
@@ -44,7 +46,7 @@ export const EmailList: React.FC<EmailListProps> = ({
     );
   }
 
-  if (emails.length === 0) {
+  if (safeEmails.length === 0) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-16 text-center text-gray-400 text-xs">
         <p className="font-medium text-gray-500 mb-1">No {tab} emails found</p>
@@ -59,11 +61,14 @@ export const EmailList: React.FC<EmailListProps> = ({
 
   return (
     <div className="flex-1 overflow-y-auto divide-y divide-gray-100 bg-white">
-      {emails.map((email) => {
+      {safeEmails.map((email) => {
         const isScheduled = email.status === 'scheduled';
-        const recipientName = email.recipient.split('@')[0].replace(/[._]/g, ' ');
+        const rawRecipient = email.recipient || 'recipient@example.com';
+        const recipientName = rawRecipient.split('@')[0].replace(/[._]/g, ' ');
         const capitalizedRecipient =
           recipientName.charAt(0).toUpperCase() + recipientName.slice(1);
+
+        const bodySnippet = (email.body || '').replace(/<[^>]*>?/gm, '').substring(0, 100);
 
         return (
           <div
@@ -92,9 +97,9 @@ export const EmailList: React.FC<EmailListProps> = ({
 
               {/* Subject & Snippet */}
               <div className="flex-1 min-w-0 truncate text-xs">
-                <span className="font-medium text-gray-900">{email.subject}</span>
+                <span className="font-medium text-gray-900">{email.subject || '(No subject)'}</span>
                 <span className="text-gray-500 ml-1">
-                  - {email.body.replace(/<[^>]*>?/gm, '').substring(0, 100)}...
+                  - {bodySnippet}...
                 </span>
               </div>
             </div>
