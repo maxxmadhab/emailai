@@ -6,6 +6,8 @@ import authRoutes from './routes/auth.routes.js';
 import senderRoutes from './routes/sender.routes.js';
 import campaignRoutes from './routes/campaign.routes.js';
 import emailRoutes from './routes/email.routes.js';
+import slackRoutes from './routes/slack.routes.js';
+import adminRoutes from './routes/admin.routes.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
 export function createApp(): Express {
@@ -30,6 +32,8 @@ export function createApp(): Express {
   app.use('/api/senders', senderRoutes);
   app.use('/api/campaigns', campaignRoutes);
   app.use('/api/emails', emailRoutes);
+  app.use('/api/slack', slackRoutes);
+  app.use('/admin', adminRoutes);
 
   // Fallback 404
   app.use((_req, res) => {

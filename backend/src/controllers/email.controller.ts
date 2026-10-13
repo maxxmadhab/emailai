@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { getPrisma } from '../lib/prisma.js';
 import { removeEmailJob } from '../queue/email.queue.js';
+import { elasticsearchService } from '../services/elasticsearch.service.js';
 
 const emailListQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -10,6 +11,23 @@ const emailListQuerySchema = z.object({
 });
 
 export class EmailController {
+  /**
+   * Search emails using Elasticsearch with tenant isolation and Postgres fallback.
+   */
+  async searchEmails(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user!.id;
+      const q = req.query.q as string | undefined;
+      const status = req.query.status as string | undefined;
+      const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
+
+      const results = await elasticsearchService.searchEmails(userId, { q, status, page, limit });
+      return res.status(200).json(results);
+    } catch (error) {
+      next(error);
+    }
+  }
   /**
    * Helper to retrieve paginated emails by status for the authenticated user.
    */

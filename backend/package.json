@@ -13,11 +13,15 @@
     "test:all": "vitest run",
     "e2e:phase1": "vitest run tests/e2e/phase1.e2e.test.ts",
     "e2e:phase2": "vitest run tests/e2e/phase2.e2e.test.ts",
+    "e2e:phase3": "vitest run tests/e2e/phase3.e2e.test.ts",
+    "load:1000": "tsx scripts/simulate-load-1000.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
     "ethereal:create": "tsx scripts/create-ethereal-account.ts"
   },
   "dependencies": {
+    "@bull-board/api": "^9.10.4",
+    "@bull-board/express": "^9.10.4",
     "@elastic/elasticsearch": "^8.12.2",
     "@prisma/client": "^5.10.2",
     "bullmq": "^5.4.1",

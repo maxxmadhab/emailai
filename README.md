@@ -130,8 +130,33 @@ npm run ethereal:create
 
 ---
 
+## ⚡ Rate Limiting & Concurrency Architecture
+
+### Fixed UTC Hourly Windows vs Rolling Windows
+- **Design Choice**: Fixed UTC hourly windows (`Math.floor(now / 3600000) * 3600000`) combined with atomic min-delay slot reservation.
+- **Trade-off Analysis**:
+  - *Fixed Windows*: Extremely fast atomic counters in Redis, deterministic quota reset boundaries, straightforward Slack notification grouping (`senderId:windowStart`), and zero memory leak risks.
+  - *Boundary Burst Trade-off*: If 50 emails are sent in the last 2 minutes of an hour (e.g. 10:58) and 50 more at the beginning of the next hour (11:00), a theoretical 100-email burst could occur.
+  - *Our Solution*: We enforce **both** the fixed window AND a mandatory **atomic min-delay reservation** (e.g. min 2s between sends per sender). Even across hour rollover boundaries, the min-delay slot is preserved in Redis, strictly preventing instantaneous bursts.
+
+### Slack Decoupled Alerting
+- Real OAuth 2.0 flow with signed HMAC states (`${userId}.${timestamp}.${signature}`).
+- First limit hit per sender per window triggers an alert job on `slack-notification-queue`.
+- **Fault-Tolerant & Decoupled**: If Slack is not connected or the Slack API is temporarily down, background email dispatch continues completely unaffected. If the user connects Slack later, subsequent alerts trigger immediately without redeployment.
+
+### Elasticsearch & Hybrid Search
+- Strict mapping on `emails` index (`userId`, `recipient`, `subject`, `body`, `status`, `scheduledAt`, `sentAt`).
+- Fully tenant-scoped (`term: { userId }`).
+- **Resilient Fallback**: If the Elasticsearch cluster is offline or undergoing maintenance, searches transparently fall back to PostgreSQL full-text queries with zero user disruption.
+
+### Protected BullMQ Admin Dashboard
+- Accessible at `/admin/queues`.
+- Protected by `adminAuthGuard` (requires valid authentication token; unauthenticated requests receive `401 UNAUTHORIZED_ADMIN`).
+
+---
+
 ## 📋 Phase Roadmap
 - [x] **Phase 1: Foundation, Auth, Senders** (Completed, 22 tests)
 - [x] **Phase 2: Scheduling Core, Queue, Persistence** (Completed, 42 tests)
-- [ ] **Phase 3: Rate Limiting, Slack, Elasticsearch, Queue Dashboard** (Next)
-- [ ] **Phase 4: Frontend (React + TypeScript + Tailwind)**
+- [x] **Phase 3: Rate Limiting, Slack, Elasticsearch, Queue Dashboard** (Completed, 61 tests)
+- [ ] **Phase 4: Frontend (React + TypeScript + Tailwind)** (Next)

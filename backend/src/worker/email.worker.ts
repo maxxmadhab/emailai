@@ -1,20 +1,19 @@
 import { Worker, Job } from 'bullmq';
 import nodemailer, { Transporter } from 'nodemailer';
-import { EMAIL_QUEUE_NAME, EmailJobData } from '../queue/email.queue.js';
+import { EMAIL_QUEUE_NAME, EmailJobData, enqueueEmailJob } from '../queue/email.queue.js';
 import { getRedis } from '../lib/redis.js';
 import { getPrisma } from '../lib/prisma.js';
 import { getEnv } from '../config/env.js';
 import { senderService } from '../services/sender.service.js';
+import { rateLimiterService } from '../services/rate-limiter.service.js';
+import { enqueueSlackAlert } from '../queue/slack.queue.js';
+import { elasticsearchService } from '../services/elasticsearch.service.js';
 import { logger } from '../lib/logger.js';
 
 export class EmailWorker {
   private worker: Worker<EmailJobData> | null = null;
-  // Per-sender pooled SMTP transporter cache to reuse socket connections
   private transporterPool: Map<string, Transporter> = new Map();
 
-  /**
-   * Retrieves or creates a pooled Nodemailer transporter for a sender.
-   */
   private async getPooledTransporter(senderId: string): Promise<Transporter> {
     if (this.transporterPool.has(senderId)) {
       return this.transporterPool.get(senderId)!;
@@ -38,9 +37,6 @@ export class EmailWorker {
     return transporter;
   }
 
-  /**
-   * Initializes and starts the BullMQ Worker.
-   */
   start(): Worker<EmailJobData> {
     if (this.worker) return this.worker;
 
@@ -74,9 +70,6 @@ export class EmailWorker {
     return this.worker;
   }
 
-  /**
-   * Core execution flow for an email job.
-   */
   async processEmailJob(job: Job<EmailJobData>) {
     const { emailId, senderId, recipient } = job.data;
     const prisma = getPrisma();
@@ -84,7 +77,6 @@ export class EmailWorker {
     logger.info({ emailId, recipient, attempt: job.attemptsMade + 1 }, 'Worker claiming email job');
 
     // 1. CONDITIONAL CLAIM (DB-level idempotency)
-    // Only transition if currently 'scheduled'. Loser of a race returns 0 rows.
     const claimResult = await prisma.email.updateMany({
       where: {
         id: emailId,
@@ -104,23 +96,95 @@ export class EmailWorker {
       return { skipped: true, reason: 'Already claimed or cancelled' };
     }
 
-    // 2. Fetch full email row
+    // 2. Fetch full email row + campaign/sender configuration
     const email = await prisma.email.findUnique({
       where: { id: emailId },
+      include: {
+        campaign: { select: { delay_seconds: true, hourly_limit: true } },
+        sender: { select: { email: true, hourly_limit: true } },
+      },
     });
 
     if (!email) {
       throw new Error(`Email record ${emailId} disappeared after claim`);
     }
 
-    // 3. [PHASE 3 PLACEHOLDER: Rate Limit & Min-Delay Admission via Redis Lua script]
-    // In Phase 3, this calls redis.eval(admissionScript, senderId, ...) to enforce
-    // min-delay slots and fixed UTC hourly quotas.
+    const hourlyLimit = Math.min(
+      email.campaign?.hourly_limit ?? 50,
+      email.sender?.hourly_limit ?? 50
+    );
+    const delaySeconds = email.campaign?.delay_seconds ?? 2;
+    const senderEmail = email.sender?.email ?? 'noreply@reachinbox.ai';
 
-    // 4. AMBIGUOUS-SMTP MITIGATION STRATEGY:
-    // Generate a deterministic Message-ID tied to the database email UUID.
-    // If a crash happens after SMTP accept but before DB status update,
-    // subsequent inspection will match this exact deterministic Message-ID.
+    // 3. ATOMIC LUA RATE LIMIT ADMISSION (Min Delay + Fixed UTC Hourly Window)
+    const admission = await rateLimiterService.requestAdmission(senderId, {
+      hourlyLimit,
+      minDelaySeconds: delaySeconds,
+    });
+
+    if (admission.decision === 'SPACING_VIOLATION') {
+      const waitDelayMs = Math.max(100, (admission.retryAtMs || Date.now()) - Date.now());
+      logger.info(
+        { emailId, senderId, waitDelayMs },
+        'Spacing delay violation. Rescheduling job to respect per-sender spacing.'
+      );
+
+      // Revert status to scheduled
+      await prisma.email.update({
+        where: { id: emailId },
+        data: { status: 'scheduled' },
+      });
+
+      // Re-enqueue delayed job in BullMQ
+      await enqueueEmailJob(job.data, waitDelayMs);
+      return { rescheduled: true, reason: 'SPACING_VIOLATION', waitDelayMs };
+    }
+
+    if (admission.decision === 'LIMIT_EXCEEDED') {
+      const nextWindowStart = new Date(admission.windowEndMs);
+      const rescheduledAt = new Date(admission.retryAtMs || admission.windowEndMs);
+      const delayUntilNextWindowMs = Math.max(1000, rescheduledAt.getTime() - Date.now());
+
+      logger.warn(
+        {
+          emailId,
+          senderId,
+          limit: admission.hourlyLimit,
+          nextWindow: nextWindowStart.toISOString(),
+        },
+        'Sender reached hourly limit. Rescheduling email to next UTC window.'
+      );
+
+      // Never drop or permanently fail: update scheduled_at to next window
+      await prisma.email.update({
+        where: { id: emailId },
+        data: {
+          status: 'scheduled',
+          scheduled_at: rescheduledAt,
+        },
+      });
+
+      // First limit hit per window emits ONE Slack alert
+      if (admission.shouldAlert) {
+        enqueueSlackAlert({
+          userId: email.user_id,
+          senderId,
+          senderEmail: email.sender.email,
+          hourlyLimit: admission.hourlyLimit,
+          currentCount: admission.currentCount,
+          windowStart: new Date(admission.windowStartMs).toISOString(),
+          windowEnd: nextWindowStart.toISOString(),
+        }).catch((slackErr) => {
+          logger.error({ slackErr }, 'Failed to enqueue Slack alert event');
+        });
+      }
+
+      // Re-enqueue job to next window
+      await enqueueEmailJob(job.data, delayUntilNextWindowMs);
+      return { rescheduled: true, reason: 'LIMIT_EXCEEDED', rescheduledAt: rescheduledAt.toISOString() };
+    }
+
+    // 4. ADMISSION GRANTED -> DISPATCH VIA NODEMAILER
     const deterministicMessageId = `<${emailId}@reachinbox.outbox.ai>`;
 
     try {
@@ -138,7 +202,7 @@ export class EmailWorker {
       const messageId = info.messageId || deterministicMessageId;
       const previewUrl = nodemailer.getTestMessageUrl(info) || null;
 
-      // 5. ATOMIC SUCCESS STATE TRANSITION
+      // 5. ATOMIC SUCCESS STATUS TRANSITION IN DB
       await prisma.email.update({
         where: { id: emailId },
         data: {
@@ -150,7 +214,17 @@ export class EmailWorker {
         },
       });
 
-      // 6. Record Outbox Event for status update (used for Elasticsearch indexing in Phase 3)
+      // 6. SYNC TO ELASTICSEARCH (Decoupled & Non-blocking)
+      elasticsearchService
+        .updateEmailStatus(emailId, {
+          status: 'sent',
+          sentAt: new Date().toISOString(),
+          messageId,
+          previewUrl: previewUrl ? String(previewUrl) : null,
+        })
+        .catch((esErr) => logger.warn({ esErr }, 'Non-blocking Elasticsearch update skipped'));
+
+      // 7. RECORD OUTBOX EVENT
       await prisma.outboxEvent.create({
         data: {
           event_type: 'EMAIL_STATUS_CHANGED',
@@ -188,7 +262,6 @@ export class EmailWorker {
       );
 
       if (isTransient && job.attemptsMade + 1 < (job.opts.attempts || 3)) {
-        // Return email to 'scheduled' state so BullMQ backoff retry can re-claim it
         await prisma.email.update({
           where: { id: emailId },
           data: {
@@ -196,9 +269,8 @@ export class EmailWorker {
             error: `Transient error (attempt ${job.attemptsMade + 1}): ${sendErr.message}`,
           },
         });
-        throw sendErr; // Re-throw to trigger BullMQ exponential backoff
+        throw sendErr;
       } else {
-        // Permanent failure or max attempts exhausted
         await prisma.email.update({
           where: { id: emailId },
           data: {
@@ -207,7 +279,13 @@ export class EmailWorker {
           },
         });
 
-        // Publish failure outbox event
+        elasticsearchService
+          .updateEmailStatus(emailId, {
+            status: 'failed',
+            error: sendErr.message,
+          })
+          .catch((esErr) => logger.warn({ esErr }, 'Non-blocking Elasticsearch update skipped'));
+
         await prisma.outboxEvent.create({
           data: {
             event_type: 'EMAIL_STATUS_CHANGED',
@@ -228,18 +306,13 @@ export class EmailWorker {
     }
   }
 
-  /**
-   * Distinguishes transient network errors from permanent recipient/auth rejections.
-   */
   private isTransientError(error: any): boolean {
     const code = error.code || '';
     const message = error.message || '';
 
-    // Network connection errors
     if (['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENOTFOUND'].includes(code)) {
       return true;
     }
-    // SMTP 4xx temporary failure codes
     if (error.responseCode && error.responseCode >= 400 && error.responseCode < 500) {
       return true;
     }
@@ -250,9 +323,6 @@ export class EmailWorker {
     return false;
   }
 
-  /**
-   * Graceful shutdown of worker and transporter connections.
-   */
   async close(): Promise<void> {
     if (this.worker) {
       await this.worker.close();
