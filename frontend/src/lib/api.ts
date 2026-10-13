@@ -102,17 +102,24 @@ export const api = {
     });
   },
 
+  async createEtherealSender(): Promise<Sender> {
+    const res = await request<any>('/api/senders/ethereal', {
+      method: 'POST',
+    });
+    return res.data || res;
+  },
+
   // Campaigns & Scheduling
   async createCampaign(
     payload: {
-      sender_id: string;
-      name: string;
+      sender_id?: string;
+      name?: string;
       subject: string;
       body: string;
       delay_seconds?: number;
       hourly_limit?: number;
       scheduled_start_at?: string;
-      recipients: Array<{ email: string; name?: string }>;
+      recipients: string[] | Array<{ email: string; name?: string }>;
     },
     idempotencyKey?: string
   ): Promise<Campaign> {
@@ -123,10 +130,20 @@ export const api = {
       headers['Idempotency-Key'] = `fe-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     }
 
+    const recipientEmails = payload.recipients.map((r: any) =>
+      typeof r === 'string' ? r.trim() : r.email?.trim()
+    ).filter(Boolean);
+
+    const bodyPayload = {
+      ...payload,
+      recipients: recipientEmails,
+      start_time: payload.scheduled_start_at,
+    };
+
     return request<Campaign>('/api/campaigns', {
       method: 'POST',
       headers,
-      body: JSON.stringify(payload),
+      body: JSON.stringify(bodyPayload),
     });
   },
 

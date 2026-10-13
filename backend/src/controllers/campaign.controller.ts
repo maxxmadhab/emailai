@@ -1,7 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
+import nodemailer from 'nodemailer';
 import { z } from 'zod';
 import { campaignService } from '../services/campaign.service.js';
+import { senderService } from '../services/sender.service.js';
 import { recipientParserService } from '../services/recipient-parser.service.js';
+import { getPrisma } from '../lib/prisma.js';
 
 const createCampaignSchema = z.object({
   sender_id: z.string().uuid('Invalid sender ID format'),
@@ -11,7 +14,7 @@ const createCampaignSchema = z.object({
   recipients: z.array(z.string().email()).optional(),
   delay_seconds: z.coerce.number().int().min(0).default(2),
   hourly_limit: z.coerce.number().int().positive().optional(),
-  start_time: z.string().datetime().optional(),
+  start_time: z.string().optional(),
 });
 
 export class CampaignController {
@@ -55,9 +58,37 @@ export class CampaignController {
       const userId = req.user!.id;
       const idempotencyKey = req.headers['idempotency-key'] as string | undefined;
 
+      // 1. Resolve or auto-provision sender if sender_id is empty/missing
+      let senderId = req.body.sender_id;
+      if (!senderId || typeof senderId !== 'string' || senderId.trim() === '') {
+        const prisma = getPrisma();
+        const existingSender = await prisma.sender.findFirst({
+          where: { user_id: userId },
+          orderBy: { created_at: 'desc' },
+        });
+
+        if (existingSender) {
+          senderId = existingSender.id;
+        } else {
+          // Auto-provision a verified Ethereal test account on the fly
+          const testAccount = await nodemailer.createTestAccount();
+          const newSender = await senderService.createSender(userId, {
+            name: `Oliver Brown (${testAccount.user.split('@')[0]})`,
+            email: testAccount.user,
+            host: testAccount.smtp.host,
+            port: testAccount.smtp.port,
+            secure: testAccount.smtp.secure,
+            username: testAccount.user,
+            password: testAccount.pass,
+            hourly_limit: 50,
+          });
+          senderId = newSender.id;
+        }
+      }
+
+      // 2. Normalize recipients list (accepts strings or objects { email: '...' })
       let recipientsList: string[] = [];
 
-      // If a file was uploaded in multipart request
       if (req.file) {
         const fileContent = req.file.buffer.toString('utf-8');
         const parsed = recipientParserService.parseContent(fileContent, 'auto');
@@ -73,17 +104,21 @@ export class CampaignController {
         }
         recipientsList = parsed.validRecipients;
       } else if (Array.isArray(req.body.recipients)) {
-        // Direct JSON recipients array
-        recipientsList = req.body.recipients;
+        recipientsList = req.body.recipients
+          .map((r: any) => (typeof r === 'string' ? r.trim() : r?.email?.trim()))
+          .filter((e: any) => typeof e === 'string' && e.includes('@'));
       } else if (typeof req.body.recipients === 'string') {
-        // Raw text block of emails
         const parsed = recipientParserService.parseContent(req.body.recipients, 'auto');
         recipientsList = parsed.validRecipients;
       }
 
+      const startTime = req.body.start_time || req.body.scheduled_start_at;
+
       const validated = createCampaignSchema.parse({
         ...req.body,
+        sender_id: senderId,
         recipients: recipientsList,
+        start_time: startTime,
       });
 
       const result = await campaignService.createCampaign(userId, {
@@ -116,6 +151,7 @@ export class CampaignController {
       const userId = req.user!.id;
 
       const campaign = await campaignService.getCampaignById(userId, id);
+
       if (!campaign) {
         return res.status(404).json({
           error: {
@@ -125,7 +161,9 @@ export class CampaignController {
         });
       }
 
-      return res.status(200).json({ data: campaign });
+      return res.status(200).json({
+        data: campaign,
+      });
     } catch (error) {
       next(error);
     }

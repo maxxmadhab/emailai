@@ -169,15 +169,17 @@ export const ComposeModal: React.FC<ComposeModalProps> = ({
 
       const campaignName = subject ? `Campaign: ${subject}` : `Outreach - ${new Date().toLocaleDateString()}`;
 
+      const finalSenderId = selectedSenderId || senders[0]?.id || undefined;
+
       await api.createCampaign({
-        sender_id: selectedSenderId || senders[0]?.id || '',
+        sender_id: finalSenderId,
         name: campaignName,
         subject: subject || 'Meeting follow-up',
         body: body || 'Hi, just wanted to follow up on our previous conversation.',
         delay_seconds: delaySeconds,
         hourly_limit: hourlyLimit,
         scheduled_start_at: scheduledAt || undefined,
-        recipients: recipientsToSend,
+        recipients: recipientsToSend.map((r) => r.email),
       });
 
       onSuccess();
@@ -346,7 +348,7 @@ export const ComposeModal: React.FC<ComposeModalProps> = ({
                   </option>
                 ))}
                 {safeSenders.length === 0 && (
-                  <option value="">oliver.brown@domain.io (Default)</option>
+                  <option value="">Default Sender (Auto-configured Ethereal)</option>
                 )}
               </select>
               <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />

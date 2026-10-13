@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import nodemailer from 'nodemailer';
 import { z } from 'zod';
 import { senderService } from '../services/sender.service.js';
 
@@ -29,6 +30,30 @@ export class SenderController {
       return res.status(201).json({
         data: sender,
         message: 'Sender account created and verified successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async createEtherealSender(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user!.id;
+      const testAccount = await nodemailer.createTestAccount();
+      const sender = await senderService.createSender(userId, {
+        name: `Oliver Brown (${testAccount.user.split('@')[0]})`,
+        email: testAccount.user,
+        host: testAccount.smtp.host,
+        port: testAccount.smtp.port,
+        secure: testAccount.smtp.secure,
+        username: testAccount.user,
+        password: testAccount.pass,
+        hourly_limit: 50,
+      });
+
+      return res.status(201).json({
+        data: sender,
+        message: 'Ethereal sender created and verified successfully',
       });
     } catch (error) {
       next(error);

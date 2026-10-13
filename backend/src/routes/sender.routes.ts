@@ -8,6 +8,7 @@ const router = Router();
 router.use(requireAuth);
 
 router.post('/', (req, res, next) => senderController.createSender(req, res, next));
+router.post('/ethereal', (req, res, next) => senderController.createEtherealSender(req, res, next));
 router.get('/', (req, res, next) => senderController.getSenders(req, res, next));
 
 export default router;
