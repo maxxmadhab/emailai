@@ -27,24 +27,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
       });
 
       if (supaErr) {
-        // If OAuth fails or is running locally without Supabase credentials, fall back to instant demo login
-        console.warn('Supabase OAuth unavailable, using demo persona:', supaErr.message);
-        const res = await api.loginWithDemo();
-        onLoginSuccess(res.user);
+        console.error('Supabase OAuth error:', supaErr);
+        setError(`Google login failed: ${supaErr.message}`);
         return;
       }
 
       if (data?.url) {
         window.location.href = data.url;
       } else {
-        const res = await api.loginWithDemo();
-        onLoginSuccess(res.user);
+        setError('No redirect URL returned from Google OAuth provider.');
       }
     } catch (err: any) {
-      console.warn('OAuth redirect fallback:', err);
-      // Seamless fallback to demo persona matching the Figma screenshot ("Oliver Brown")
-      const res = await api.loginWithDemo();
-      onLoginSuccess(res.user);
+      console.error('OAuth redirect error:', err);
+      setError(err?.message || 'Failed to initiate Google sign in.');
     } finally {
       setLoading(false);
     }
