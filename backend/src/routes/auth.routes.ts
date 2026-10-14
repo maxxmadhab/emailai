@@ -21,6 +21,7 @@ router.get('/me', requireAuth, async (req: Request, res: Response) => {
       email: true,
       name: true,
       avatar_url: true,
+      role: true,
       created_at: true,
       updated_at: true,
     },
@@ -68,12 +69,21 @@ router.post('/demo-token', async (req: Request, res: Response) => {
     { algorithm: 'HS256' }
   );
 
+  let userRole = 'user';
   try {
     const prisma = getPrisma();
+    const adminEmails = (getEnv().ADMIN_EMAILS || '')
+      .split(',')
+      .map((e: string) => e.trim().toLowerCase())
+      .filter(Boolean);
+    const count = await prisma.user.count();
+    const shouldBeAdmin = adminEmails.includes(email.toLowerCase()) || count === 0;
+    userRole = shouldBeAdmin ? 'admin' : 'user';
+
     await prisma.user.upsert({
       where: { id },
-      update: { email, name, avatar_url: avatarUrl },
-      create: { id, email, name, avatar_url: avatarUrl },
+      update: { email, name, avatar_url: avatarUrl, role: shouldBeAdmin ? 'admin' : undefined },
+      create: { id, email, name, avatar_url: avatarUrl, role: userRole },
     });
   } catch {
     // If DB is offline, token is still cryptographically valid
@@ -87,6 +97,7 @@ router.post('/demo-token', async (req: Request, res: Response) => {
         email,
         name,
         avatar_url: avatarUrl,
+        role: userRole,
       },
     },
   });

@@ -51,10 +51,33 @@
 - [x] **Phase 2: Scheduling Core, Queue, Persistence**: Completed (42/42 tests passing).
 - [x] **Phase 3: Rate Limiting, Slack, Elasticsearch, Queue Dashboard**: Completed (61/61 tests passing).
 - [x] **Phase 4: Frontend Dashboard (React + TypeScript + Tailwind)**: Completed (6/6 tests passing, 67/67 cumulative passing).
+- [x] **Change Set C1: Automatic Scheduled to Sent Transition**: Completed (SSE stream, worker retry loop, recovery).
+- [x] **Change Set C2: Admin vs User Roles, Shared Senders, and Limit Caps**: Completed (Admin gating, shared senders, input caps).
+- [x] **Change Set C3: Slack OAuth Integration Fix & Live Testing**: Completed (State validation, test alert endpoint, redirect callback).
+- [x] **Change Set C4: File Attachments & Supabase Storage**: Completed (Magic byte check, streaming send, signed download).
+- [x] **Change Set C5: Figma Compose Modal & TipTap Rich Text Editor**: Completed (Pixel-perfect modal, TipTap toolbar, HTML sanitization).
 
 ---
 
-## Test Inventory (Cumulative: 67 Tests, 100% Pass)
+## Test Inventory (Cumulative: 74 Backend Tests Across 17 Files, 100% Pass)
+
+### Change Set C1 Tests (5 Tests)
+- `tests/unit/c1.worker.test.ts` (5 tests)
+  - Worker marks email as "sent" only when SMTP accepted recipient and returned 2xx response
+  - Worker treats rejected recipient as permanent failure and NEVER marks as "sent"
+  - DB write failure after SMTP accept retries DB update without re-sending the email
+  - Crashed worker mid-send recovery: deterministic reconciliation without double-send
+  - API contract: Scheduled and Sent lists never overlap, and counts are consistent
+
+### Change Set C2 Tests (7 Tests)
+- `tests/unit/c2.roles.test.ts` (7 tests)
+  - Non-admin receives 403 on POST /api/senders
+  - Safe public shape returned for non-admins (credentials and internal configs stripped)
+  - Admin receives full sender shape including credentials
+  - Delay below sender minimum rejected with clear error (DELAY_BELOW_SENDER_MINIMUM)
+  - Hourly limit above sender cap rejected with clear error (HOURLY_LIMIT_EXCEEDS_SENDER_CAP)
+  - Senders are shared across users; all users can use active senders in Compose
+  - Non-admin receives 403 when attempting to access /admin/queues BullMQ board
 
 ### Phase 1 Tests (22 Tests)
 - `tests/unit/env.test.ts` (4 tests)
@@ -70,14 +93,14 @@
 - `tests/integration/worker.lifecycle.test.ts` (3 tests)
 - `tests/e2e/phase2.e2e.test.ts` (5 tests)
 
-### Phase 3 Tests (19 Tests)
+### Phase 3 Tests (20 Tests)
 - `tests/unit/rate-limiter.lua.test.ts` (4 tests)
 - `tests/integration/slack.oauth.test.ts` (5 tests)
 - `tests/integration/elasticsearch.search.test.ts` (2 tests)
-- `tests/integration/admin.dashboard.test.ts` (3 tests)
+- `tests/integration/admin.dashboard.test.ts` (4 tests)
 - `tests/e2e/phase3.e2e.test.ts` (5 tests)
 
-### Phase 4 Tests (6 Tests)
+### Phase 4 Tests
 - `frontend/tests/components.test.tsx` (6 tests)
   - `LoginPage` renders matching Figma screenshot #1 (Google button, email/password, green button)
   - `Sidebar` renders ONB logo, Oliver Brown user card, Compose button, Scheduled & Sent tabs with badges (screenshot #2 & #3)
@@ -91,10 +114,10 @@
 ## Reproduce Commands
 
 ```bash
-# Run backend test suite (Phases 1-3)
+# Run backend test suite (All 17 test suites, 74 tests)
 cd backend && npm test
 
-# Run frontend component test suite (Phase 4)
+# Run frontend component test suite
 cd frontend && npm test
 
 # Run 1,000 email load simulation

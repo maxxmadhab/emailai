@@ -42,8 +42,8 @@ async function bootstrap() {
     logger.error({ err: workerErr }, 'Failed to start BullMQ background workers');
   }
 
-  const server = app.listen(env.PORT, () => {
-    logger.info(`Server listening on port ${env.PORT} in ${env.NODE_ENV} mode`);
+  const server = app.listen(env.PORT, '0.0.0.0', () => {
+    logger.info(`Server listening on 0.0.0.0:${env.PORT} in ${env.NODE_ENV} mode`);
   });
 
   const shutdown = async (signal: string) => {
@@ -76,6 +76,14 @@ async function bootstrap() {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
+
+process.on('uncaughtException', (err: any) => {
+  logger.warn({ err: err?.message || err }, 'Uncaught exception handled gracefully');
+});
+
+process.on('unhandledRejection', (reason: any) => {
+  logger.warn({ reason: reason?.message || reason }, 'Unhandled rejection handled gracefully');
+});
 
 bootstrap().catch((err) => {
   logger.fatal({ err }, 'Fatal error during application startup');

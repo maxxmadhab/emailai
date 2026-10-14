@@ -12,6 +12,8 @@ process.env.SUPABASE_JWT_SECRET = 'test-supabase-jwt-secret-at-least-32chars';
 process.env.CREDENTIAL_ENCRYPTION_KEY =
   '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
+process.env.ADMIN_EMAILS = 'usera@example.com';
+
 describe('Sender API & Tenant Isolation', () => {
   const app = createApp();
 
@@ -29,23 +31,35 @@ describe('Sender API & Tenant Isolation', () => {
 
   // In-memory store to simulate database for unit/integration testing
   const sendersDb: any[] = [];
-  const usersDb: any[] = [];
+  const usersDb: any[] = [
+    { ...userA, role: 'admin' },
+    { ...userB, role: 'user' },
+  ];
 
   const mockPrisma: any = {
     user: {
-      upsert: vi.fn().mockImplementation(({ create }) => {
-        usersDb.push(create);
-        return Promise.resolve(create);
+      upsert: vi.fn().mockImplementation(({ create, update }) => {
+        let existing = usersDb.find((u) => u.id === create.id);
+        if (!existing) {
+          existing = { ...create };
+          usersDb.push(existing);
+        } else if (update) {
+          Object.assign(existing, update);
+        }
+        return Promise.resolve(existing);
       }),
       findUnique: vi.fn().mockImplementation(({ where }) => {
         return Promise.resolve(usersDb.find((u) => u.id === where.id) || null);
       }),
+      count: vi.fn().mockResolvedValue(usersDb.length),
     },
     sender: {
       create: vi.fn().mockImplementation(({ data, select }) => {
         const record = {
           id: 'test-sender-id-' + Math.random().toString(36).substring(7),
           ...data,
+          is_shared: true,
+          min_delay_seconds: 2,
           created_at: new Date(),
           updated_at: new Date(),
         };
@@ -59,28 +73,10 @@ describe('Sender API & Tenant Isolation', () => {
         }
         return Promise.resolve(record);
       }),
-      findMany: vi.fn().mockImplementation(({ where, skip = 0, take = 20 }) => {
-        const filtered = sendersDb.filter((s) => s.user_id === where.user_id);
-        const sliced = filtered.slice(skip, skip + take);
-        return Promise.resolve(
-          sliced.map((s) => ({
-            id: s.id,
-            user_id: s.user_id,
-            name: s.name,
-            email: s.email,
-            host: s.host,
-            port: s.port,
-            secure: s.secure,
-            hourly_limit: s.hourly_limit,
-            status: s.status,
-            created_at: s.created_at,
-            updated_at: s.updated_at,
-          }))
-        );
+      findMany: vi.fn().mockImplementation(() => {
+        return Promise.resolve(sendersDb.map((s) => ({ ...s })));
       }),
-      count: vi.fn().mockImplementation(({ where }) => {
-        return Promise.resolve(sendersDb.filter((s) => s.user_id === where.user_id).length);
-      }),
+      count: vi.fn().mockImplementation(() => Promise.resolve(sendersDb.length)),
     },
     $connect: vi.fn().mockResolvedValue(undefined),
     $disconnect: vi.fn().mockResolvedValue(undefined),
@@ -163,13 +159,31 @@ describe('Sender API & Tenant Isolation', () => {
     expect(listARes.body.items).toHaveLength(1);
     expect(listARes.body.items[0].name).toBe('User A Sender');
 
-    // User B lists senders -> sees 0 senders!
+    // User B (regular user) lists senders -> sees the shared sender with safe public shape (no host, port, or credentials)
     const listBRes = await request(app)
       .get('/api/senders')
       .set('Authorization', `Bearer ${tokenB}`);
 
     expect(listBRes.status).toBe(200);
-    expect(listBRes.body.items).toHaveLength(0);
-    expect(listBRes.body.pagination.total).toBe(0);
+    expect(listBRes.body.items).toHaveLength(1);
+    expect(listBRes.body.items[0].smtp_host).toBeUndefined();
+    expect(listBRes.body.items[0].smtp_port).toBeUndefined();
+    expect(listBRes.body.items[0].password).toBeUndefined();
+    expect(listBRes.body.items[0].encrypted_password).toBeUndefined();
+
+    // User B attempts to create a sender -> rejected with 403 FORBIDDEN
+    const userBCreateRes = await request(app)
+      .post('/api/senders')
+      .set('Authorization', `Bearer ${tokenB}`)
+      .send({
+        name: 'User B Sender',
+        email: 'userb@smtp.ethereal.email',
+        host: 'smtp.ethereal.email',
+        port: 587,
+        username: 'userb',
+        password: 'pass',
+      });
+    expect(userBCreateRes.status).toBe(403);
+    expect(userBCreateRes.body.error.code).toBe('FORBIDDEN');
   });
 });

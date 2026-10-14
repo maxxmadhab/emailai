@@ -4,7 +4,9 @@ import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { ExpressAdapter } from '@bull-board/express';
 import { getEmailQueue } from '../queue/email.queue.js';
 import { getSlackQueue } from '../queue/slack.queue.js';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { getPrisma } from '../lib/prisma.js';
+import { z } from 'zod';
 
 const router = Router();
 
@@ -20,9 +22,8 @@ createBullBoard({
 });
 
 // Admin authentication middleware:
-// Rejects unauthenticated requests; requires valid JWT token or admin bearer header
+// Rejects unauthenticated requests with 401; rejects non-admins with 403
 function adminAuthGuard(req: Request, res: Response, next: NextFunction) {
-  // If request contains Bearer token or cookie, verify using requireAuth
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({
@@ -33,9 +34,85 @@ function adminAuthGuard(req: Request, res: Response, next: NextFunction) {
     });
   }
 
-  return requireAuth(req, res, next);
+  return requireAuth(req, res, () => {
+    return requireAdmin(req, res, next);
+  });
 }
 
 router.use('/queues', adminAuthGuard, serverAdapter.getRouter());
+
+// Admin User Role Management: List users
+router.get('/users', requireAuth, requireAdmin, async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const prisma = getPrisma();
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        avatar_url: true,
+        created_at: true,
+      },
+      orderBy: { created_at: 'desc' },
+    });
+    return res.json({ data: users });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const updateRoleSchema = z.object({
+  role: z.enum(['admin', 'user']),
+});
+
+// Admin User Role Management: Promote / Demote user
+router.patch('/users/:id/role', requireAuth, requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { role } = updateRoleSchema.parse(req.body);
+    const userId = req.params.id;
+    const prisma = getPrisma();
+
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: { role },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+      },
+    });
+
+    return res.json({
+      data: updated,
+      message: `User role updated to ${role} successfully`,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Admin overview settings
+router.get('/settings', requireAuth, requireAdmin, async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const prisma = getPrisma();
+    const [userCount, senderCount, campaignCount] = await Promise.all([
+      prisma.user.count(),
+      prisma.sender.count(),
+      prisma.campaign.count(),
+    ]);
+    return res.json({
+      data: {
+        totalUsers: userCount,
+        totalSenders: senderCount,
+        totalCampaigns: campaignCount,
+        adminEmails: (process.env.ADMIN_EMAILS || '').split(',').map((e) => e.trim()).filter(Boolean),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 export default router;

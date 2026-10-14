@@ -11,48 +11,57 @@ export class SlackService {
     return env.SLACK_SIGNING_SECRET || env.SUPABASE_JWT_SECRET;
   }
 
+  private usedStates = new Set<string>();
+
   /**
    * Generates a tamper-proof signed OAuth state string.
    * Format: <userId>.<timestamp>.<hmacSignature>
    */
   generateSignedState(userId: string): string {
     const timestamp = Date.now().toString();
-    const payload = `${userId}:${timestamp}`;
+    const nonce = crypto.randomBytes(8).toString('hex');
+    const payload = `${userId}:${timestamp}:${nonce}`;
     const hmac = crypto
       .createHmac('sha256', this.getSigningKey())
       .update(payload)
       .digest('hex');
 
-    return `${userId}.${timestamp}.${hmac}`;
+    return `${userId}.${timestamp}.${nonce}.${hmac}`;
   }
 
   /**
-   * Validates state signature and expiration (15 minutes).
+   * Validates state signature and expiration (10 minutes, single-use).
    */
   verifySignedState(state: string): { valid: boolean; userId?: string; error?: string } {
+    if (this.usedStates.has(state)) {
+      return { valid: false, error: 'OAuth state parameter has already been used (replay detected)' };
+    }
+
     const parts = state.split('.');
-    if (parts.length !== 3) {
+    if (parts.length !== 4) {
       return { valid: false, error: 'Malformed OAuth state parameter' };
     }
 
-    const [userId, timestampStr, signature] = parts;
+    const [userId, timestampStr, nonce, signature] = parts;
     const timestamp = parseInt(timestampStr, 10);
     const now = Date.now();
 
-    // Expire state after 15 minutes
-    if (now - timestamp > 15 * 60 * 1000 || now < timestamp - 60000) {
+    // Expire state after 10 minutes
+    if (now - timestamp > 10 * 60 * 1000 || now < timestamp - 60000) {
       return { valid: false, error: 'OAuth state parameter has expired' };
     }
 
     const expectedHmac = crypto
       .createHmac('sha256', this.getSigningKey())
-      .update(`${userId}:${timestampStr}`)
+      .update(`${userId}:${timestampStr}:${nonce}`)
       .digest('hex');
 
     if (expectedHmac !== signature) {
       return { valid: false, error: 'OAuth state signature verification failed (tampered state)' };
     }
 
+    // Mark as consumed
+    this.usedStates.add(state);
     return { valid: true, userId };
   }
 
@@ -67,7 +76,7 @@ export class SlackService {
 
     const params = new URLSearchParams({
       client_id: clientId,
-      scope: 'incoming-webhook,chat:write',
+      scope: 'incoming-webhook,chat:write,chat:write.public',
       redirect_uri: redirectUri,
       state,
     });
@@ -89,6 +98,7 @@ export class SlackService {
 
     const userId = verification.userId;
     const env = getEnv();
+    const redirectUri = env.SLACK_REDIRECT_URI || `http://localhost:${env.PORT}/api/slack/callback`;
 
     const response = await fetch('https://slack.com/api/oauth.v2.access', {
       method: 'POST',
@@ -97,7 +107,7 @@ export class SlackService {
         client_id: env.SLACK_CLIENT_ID || '',
         client_secret: env.SLACK_CLIENT_SECRET || '',
         code,
-        redirect_uri: env.SLACK_REDIRECT_URI || '',
+        redirect_uri: redirectUri,
       }),
     });
 
@@ -141,6 +151,38 @@ export class SlackService {
 
     logger.info({ userId, teamName: connection.team_name }, 'Slack connection connected successfully');
     return connection;
+  }
+
+  /**
+   * Sends a manual test message to verify the Slack OAuth integration.
+   */
+  async sendTestMessage(userId: string) {
+    const prisma = getPrisma();
+    const connection = await prisma.slackConnection.findUnique({
+      where: { user_id: userId },
+    });
+
+    if (!connection || connection.status !== 'active') {
+      const err: any = new Error('Slack is not connected for this account');
+      err.statusCode = 400;
+      err.code = 'SLACK_NOT_CONNECTED';
+      throw err;
+    }
+
+    const now = new Date();
+    const oneHourAgo = new Date(Date.now() - 3600000);
+
+    const testAlert: SlackAlertData = {
+      userId,
+      senderId: 'test-sender-id',
+      senderEmail: 'test-outreach@reachinbox.ai',
+      hourlyLimit: 50,
+      currentCount: 50,
+      windowStart: oneHourAgo.toISOString(),
+      windowEnd: now.toISOString(),
+    };
+
+    return this.sendRateLimitAlert(testAlert);
   }
 
   /**

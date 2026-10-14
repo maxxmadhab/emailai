@@ -7,6 +7,8 @@ const router = Router();
 // All email endpoints require authentication
 router.use(requireAuth);
 
+router.get('/counts', (req, res, next) => emailController.getCounts(req, res, next));
+router.get('/events', (req, res) => emailController.subscribeEvents(req, res));
 router.get('/search', (req, res, next) => emailController.searchEmails(req, res, next));
 router.get('/scheduled', (req, res, next) => emailController.getScheduledEmails(req, res, next));
 router.get('/sent', (req, res, next) => emailController.getSentEmails(req, res, next));

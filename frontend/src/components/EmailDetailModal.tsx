@@ -109,22 +109,14 @@ export const EmailDetailModal: React.FC<EmailDetailModalProps> = ({
 
         {/* Email Body */}
         <div className="text-sm text-gray-800 leading-relaxed space-y-4 mb-8">
-          <p className="whitespace-pre-line">{email.body}</p>
-
-          {/* Highlight Callout Box (matching Figma screenshot style) */}
-          <div className="p-4 rounded-lg bg-[#FEF9E7] border-l-4 border-[#F59E0B] text-amber-950 space-y-2 text-xs">
-            <div className="font-bold flex items-center gap-2">
-              <span>⚡</span>
-              <span>Extremely Exclusive—Only 4 Spots Worldwide Per Year | $25,000 investment</span>
-              <span>⚡</span>
-            </div>
-            <div className="flex items-center gap-2 text-amber-900">
-              <span>⚡</span>
-              <span>
-                To explore securing your private transformation, simply reply right now with <strong className="font-bold">"FLY OUT FIX"</strong>.
-              </span>
-            </div>
-          </div>
+          {email.body_html ? (
+            <div
+              className="prose prose-sm max-w-none text-xs text-gray-800 leading-relaxed"
+              dangerouslySetInnerHTML={{ __html: email.body_html }}
+            />
+          ) : (
+            <p className="whitespace-pre-line text-xs">{email.body}</p>
+          )}
         </div>
 
         {/* Attachments Section (matching Figma cards) */}

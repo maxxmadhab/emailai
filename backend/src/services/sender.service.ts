@@ -12,6 +12,8 @@ export interface CreateSenderInput {
   username: string;
   password: string;
   hourly_limit?: number;
+  min_delay_seconds?: number;
+  is_shared?: boolean;
 }
 
 export class SenderService {
@@ -86,6 +88,8 @@ export class SenderService {
         encrypted_username: encryptedUsername,
         encrypted_password: encryptedPassword,
         hourly_limit: input.hourly_limit ?? 50,
+        min_delay_seconds: input.min_delay_seconds ?? 2,
+        is_shared: input.is_shared ?? true,
         status: 'active',
       },
       select: {
@@ -97,6 +101,8 @@ export class SenderService {
         port: true,
         secure: true,
         hourly_limit: true,
+        min_delay_seconds: true,
+        is_shared: true,
         status: true,
         created_at: true,
         updated_at: true,
@@ -107,46 +113,133 @@ export class SenderService {
   }
 
   /**
-   * Retrieves senders for a specific user with pagination.
-   * Strictly tenant-scoped.
+   * Updates an existing sender configuration (admin only).
+   */
+  async updateSender(senderId: string, input: Partial<CreateSenderInput>) {
+    const prisma = getPrisma();
+    const existing = await prisma.sender.findUnique({ where: { id: senderId } });
+    if (!existing) {
+      const err: any = new Error(`Sender not found: ${senderId}`);
+      err.statusCode = 404;
+      err.code = 'SENDER_NOT_FOUND';
+      throw err;
+    }
+
+    const data: any = {};
+    if (input.name !== undefined) data.name = input.name;
+    if (input.email !== undefined) data.email = input.email;
+    if (input.host !== undefined) data.host = input.host;
+    if (input.port !== undefined) data.port = input.port;
+    if (input.secure !== undefined) data.secure = input.secure;
+    if (input.hourly_limit !== undefined) data.hourly_limit = input.hourly_limit;
+    if (input.min_delay_seconds !== undefined) data.min_delay_seconds = input.min_delay_seconds;
+    if (input.is_shared !== undefined) data.is_shared = input.is_shared;
+
+    if (input.username) data.encrypted_username = encrypt(input.username);
+    if (input.password) data.encrypted_password = encrypt(input.password);
+
+    const updated = await prisma.sender.update({
+      where: { id: senderId },
+      data,
+      select: {
+        id: true,
+        user_id: true,
+        name: true,
+        email: true,
+        host: true,
+        port: true,
+        secure: true,
+        hourly_limit: true,
+        min_delay_seconds: true,
+        is_shared: true,
+        status: true,
+        created_at: true,
+        updated_at: true,
+      },
+    });
+
+    return updated;
+  }
+
+  /**
+   * Deletes a sender (admin only).
+   */
+  async deleteSender(senderId: string) {
+    const prisma = getPrisma();
+    await prisma.sender.delete({
+      where: { id: senderId },
+    });
+    return { deleted: true };
+  }
+
+  /**
+   * Retrieves senders for users or admins.
+   * Admin receives full admin shape; regular users receive safe public shape without credentials.
    */
   async getSendersByUser(
-    userId: string,
+    user: { id: string; role?: string },
     options: { page?: number; limit?: number } = {}
   ) {
     const page = Math.max(1, options.page ?? 1);
-    const limit = Math.min(100, Math.max(1, options.limit ?? 20));
+    const limit = Math.min(100, Math.max(1, options.limit ?? 50));
     const skip = (page - 1) * limit;
 
     const prisma = getPrisma();
+    const isAdmin = user.role === 'admin';
+
+    const whereClause: any = isAdmin
+      ? {}
+      : {
+          OR: [
+            { is_shared: true },
+            { user_id: user.id },
+          ],
+        };
 
     const [total, items] = await Promise.all([
-      prisma.sender.count({
-        where: { user_id: userId },
-      }),
+      prisma.sender.count({ where: whereClause }),
       prisma.sender.findMany({
-        where: { user_id: userId },
+        where: whereClause,
         skip,
         take: limit,
         orderBy: { created_at: 'desc' },
-        select: {
-          id: true,
-          user_id: true,
-          name: true,
-          email: true,
-          host: true,
-          port: true,
-          secure: true,
-          hourly_limit: true,
-          status: true,
-          created_at: true,
-          updated_at: true,
-        },
       }),
     ]);
 
+    const formatted = items.map((s: any) => {
+      if (isAdmin) {
+        return {
+          id: s.id,
+          user_id: s.user_id,
+          name: s.name,
+          email: s.email,
+          host: s.host || s.smtp_host,
+          smtp_host: s.smtp_host || s.host,
+          port: s.port || s.smtp_port,
+          smtp_port: s.smtp_port || s.port,
+          secure: s.secure,
+          hourly_limit: s.hourly_limit,
+          min_delay_seconds: s.min_delay_seconds ?? 2,
+          is_shared: s.is_shared ?? true,
+          status: s.status,
+          created_at: s.created_at,
+          updated_at: s.updated_at,
+        };
+      }
+
+      // Safe public shape: never leaks host, port, username, password, or encrypted secrets
+      return {
+        id: s.id,
+        name: s.name,
+        email: s.email,
+        hourly_limit: s.hourly_limit,
+        min_delay_seconds: s.min_delay_seconds ?? 2,
+        status: s.status,
+      };
+    });
+
     return {
-      items,
+      items: formatted,
       pagination: {
         page,
         limit,

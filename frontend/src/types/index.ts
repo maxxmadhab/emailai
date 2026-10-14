@@ -3,18 +3,31 @@ export interface User {
   email: string;
   name?: string | null;
   avatar_url?: string | null;
+  role?: 'admin' | 'user';
 }
 
 export interface Sender {
   id: string;
-  user_id: string;
+  user_id?: string;
   name: string;
   email: string;
-  provider: string;
-  smtp_host: string;
-  smtp_port: number;
+  provider?: string;
+  host?: string;
+  port?: number;
+  smtp_host?: string;
+  smtp_port?: number;
   hourly_limit: number;
-  min_delay_seconds: number;
+  min_delay_seconds?: number;
+  is_shared?: boolean;
+  status?: string;
+  created_at?: string;
+}
+
+export interface Attachment {
+  id: string;
+  original_filename: string;
+  mime_type: string;
+  size_bytes: number;
   created_at: string;
 }
 
@@ -26,6 +39,7 @@ export interface Email {
   recipient: string;
   subject: string;
   body: string;
+  body_html?: string | null;
   status: 'scheduled' | 'processing' | 'sent' | 'failed' | 'cancelled';
   scheduled_at: string;
   sent_at?: string | null;
@@ -44,6 +58,8 @@ export interface Campaign {
   name: string;
   subject: string;
   body: string;
+  body_html?: string | null;
+  attachments?: Attachment[];
   status: 'draft' | 'scheduled' | 'running' | 'completed' | 'paused' | 'cancelled';
   delay_seconds: number;
   hourly_limit: number;

@@ -3,6 +3,7 @@ import { EmailWorker } from '../../src/worker/email.worker.js';
 import { outboxDispatcherService } from '../../src/services/outbox-dispatcher.service.js';
 import * as prismaModule from '../../src/lib/prisma.js';
 import * as queueModule from '../../src/queue/email.queue.js';
+import { rateLimiterService } from '../../src/services/rate-limiter.service.js';
 
 describe('Worker Lifecycle & Concurrency Safety', () => {
   const emailWorker = new EmailWorker();
@@ -54,6 +55,7 @@ describe('Worker Lifecycle & Concurrency Safety', () => {
         return Promise.resolve(ev);
       }),
     },
+    $transaction: vi.fn().mockImplementation((cb) => typeof cb === 'function' ? cb(mockPrisma) : Promise.all(cb)),
   };
 
   beforeEach(() => {
@@ -70,6 +72,14 @@ describe('Worker Lifecycle & Concurrency Safety', () => {
     };
     outboxEvents.length = 0;
     vi.spyOn(prismaModule, 'getPrisma').mockReturnValue(mockPrisma);
+    vi.spyOn(rateLimiterService, 'requestAdmission').mockResolvedValue({
+      decision: 'GRANTED',
+      currentCount: 1,
+      hourlyLimit: 50,
+      shouldAlert: false,
+      windowStartMs: Date.now(),
+      windowEndMs: Date.now() + 3600000,
+    });
   });
 
   it('guarantees conditional claim: when 2 workers race on the same email, exactly one claims and loser skips', async () => {
@@ -77,6 +87,9 @@ describe('Worker Lifecycle & Concurrency Safety', () => {
     (emailWorker as any).getPooledTransporter = vi.fn().mockResolvedValue({
       sendMail: vi.fn().mockResolvedValue({
         messageId: '<msg-123@reachinbox.mail>',
+        accepted: ['race@example.com'],
+        rejected: [],
+        response: '250 2.0.0 OK',
       }),
     });
 

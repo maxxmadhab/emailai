@@ -18,19 +18,18 @@ async function testUrl(url: string, label: string) {
 }
 
 async function run() {
-  // Test with encoded @ (maxxmad123%40)
-  const ok1 = await testUrl(
-    'postgresql://postgres:maxxmad123%40@db.mhsgfvxzxgqyirldhcim.supabase.co:5432/postgres',
-    'Encoded Password (maxxmad123%40)'
+  await testUrl(
+    'postgresql://postgres.mhsgfvxzxgqyirldhcim:maxxmad123%40@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres',
+    'Pooler Session (ap-southeast-2:5432)'
   );
-
-  if (!ok1) {
-    // Test with plain maxxmad123 (without trailing @)
-    await testUrl(
-      'postgresql://postgres:maxxmad123@db.mhsgfvxzxgqyirldhcim.supabase.co:5432/postgres',
-      'Plain Password (maxxmad123)'
-    );
-  }
+  await testUrl(
+    'postgresql://postgres.mhsgfvxzxgqyirldhcim:maxxmad123%40@aws-0-ap-southeast-2.pooler.supabase.com:6543/postgres?pgbouncer=true',
+    'Pooler Transaction (ap-southeast-2:6543)'
+  );
+  await testUrl(
+    'postgresql://postgres.mhsgfvxzxgqyirldhcim:maxxmad123@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres',
+    'Pooler Session with plain password (ap-southeast-2:5432)'
+  );
 }
 
 run();

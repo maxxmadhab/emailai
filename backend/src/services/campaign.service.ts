@@ -3,16 +3,44 @@ import { getPrisma } from '../lib/prisma.js';
 import { outboxDispatcherService } from './outbox-dispatcher.service.js';
 import { logger } from '../lib/logger.js';
 
+import sanitizeHtml from 'sanitize-html';
+
 export interface CreateCampaignInput {
   sender_id: string;
   name?: string;
   subject: string;
-  body: string;
+  body?: string;
+  body_html?: string;
   recipients: string[];
   delay_seconds?: number;
   hourly_limit?: number;
   start_time?: string;
   idempotency_key?: string;
+  attachmentIds?: string[];
+}
+
+export function sanitizeEmailHtml(html: string): { cleanHtml: string; plainText: string } {
+  const cleanHtml = sanitizeHtml(html, {
+    allowedTags: [
+      'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'strike',
+      'a', 'ul', 'ol', 'li', 'blockquote', 'h1', 'h2', 'h3', 'span', 'div',
+    ],
+    allowedAttributes: {
+      a: ['href', 'title', 'target'],
+      span: ['style'],
+      p: ['style'],
+      div: ['style'],
+    },
+    allowedSchemes: ['http', 'https', 'mailto'],
+  });
+
+  const plainText = cleanHtml
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<[^>]+>/g, '')
+    .trim();
+
+  return { cleanHtml, plainText };
 }
 
 export class CampaignService {
@@ -24,16 +52,19 @@ export class CampaignService {
   async createCampaign(userId: string, input: CreateCampaignInput) {
     const prisma = getPrisma();
 
-    // 1. Verify sender ownership
+    // 1. Verify sender access (shared sender or owned by user)
     const sender = await prisma.sender.findFirst({
       where: {
         id: input.sender_id,
-        user_id: userId,
+        OR: [
+          { is_shared: true },
+          { user_id: userId },
+        ],
       },
     });
 
     if (!sender) {
-      const err: any = new Error('Sender not found or does not belong to the authenticated user');
+      const err: any = new Error('Sender not found or not accessible');
       err.statusCode = 404;
       err.code = 'SENDER_NOT_FOUND';
       throw err;
@@ -46,14 +77,49 @@ export class CampaignService {
       throw err;
     }
 
-    // 2. Validate and clamp rate limits
-    const delaySeconds = Math.max(0, input.delay_seconds ?? 2);
-    // Campaign limit cannot exceed sender's limit
-    const hourlyLimit = input.hourly_limit
-      ? Math.min(input.hourly_limit, sender.hourly_limit)
-      : sender.hourly_limit;
+    // 2. Validate rate limits strictly against sender caps
+    const senderMinDelay = (sender as any).min_delay_seconds ?? 2;
+    const requestedDelay = input.delay_seconds !== undefined ? input.delay_seconds : senderMinDelay;
 
-    // 3. Calculate scheduled time per email based on spacing
+    if (requestedDelay < senderMinDelay) {
+      const err: any = new Error(
+        `Campaign delay (${requestedDelay}s) cannot be lower than sender minimum delay (${senderMinDelay}s)`
+      );
+      err.statusCode = 400;
+      err.code = 'DELAY_BELOW_SENDER_MINIMUM';
+      throw err;
+    }
+
+    const senderHourlyLimit = sender.hourly_limit ?? 50;
+    const requestedHourlyLimit = input.hourly_limit !== undefined ? input.hourly_limit : senderHourlyLimit;
+
+    if (requestedHourlyLimit > senderHourlyLimit) {
+      const err: any = new Error(
+        `Campaign hourly limit (${requestedHourlyLimit}) cannot exceed sender hourly limit (${senderHourlyLimit})`
+      );
+      err.statusCode = 400;
+      err.code = 'HOURLY_LIMIT_EXCEEDS_SENDER_CAP';
+      throw err;
+    }
+
+    const delaySeconds = requestedDelay;
+    const hourlyLimit = requestedHourlyLimit;
+
+    // 3. Process and sanitize body: generate HTML and plain-text alternative
+    let cleanBodyHtml: string | null = null;
+    let plainBody = input.body || '';
+
+    if (input.body_html) {
+      const sanitized = sanitizeEmailHtml(input.body_html);
+      cleanBodyHtml = sanitized.cleanHtml;
+      if (!plainBody) {
+        plainBody = sanitized.plainText;
+      }
+    } else if (plainBody) {
+      cleanBodyHtml = `<p>${plainBody.replace(/\n/g, '<br/>')}</p>`;
+    }
+
+    // 4. Calculate scheduled time per email based on spacing
     const baseStartTime = input.start_time ? new Date(input.start_time).getTime() : Date.now();
     const now = Date.now();
     const effectiveStartTime = Math.max(now, isNaN(baseStartTime) ? now : baseStartTime);
@@ -67,6 +133,7 @@ export class CampaignService {
       recipient: string;
       subject: string;
       body: string;
+      body_html: string | null;
       status: string;
       scheduled_at: Date;
     }> = [];
@@ -93,7 +160,8 @@ export class CampaignService {
         sender_id: sender.id,
         recipient,
         subject: input.subject,
-        body: input.body,
+        body: plainBody,
+        body_html: cleanBodyHtml,
         status: 'scheduled',
         scheduled_at: scheduledTime,
       });
@@ -115,7 +183,7 @@ export class CampaignService {
       });
     }
 
-    // 4. Execute atomic database transaction
+    // 5. Execute atomic database transaction
     const { campaign, outboxEventIds } = await prisma.$transaction(async (tx) => {
       // a) Insert Campaign
       const createdCampaign = await tx.campaign.create({
@@ -125,7 +193,8 @@ export class CampaignService {
           sender_id: sender.id,
           name: input.name || `Campaign: ${input.subject.slice(0, 30)}`,
           subject: input.subject,
-          body: input.body,
+          body: plainBody,
+          body_html: cleanBodyHtml,
           delay_seconds: delaySeconds,
           hourly_limit: hourlyLimit,
           idempotency_key: input.idempotency_key || null,
@@ -138,7 +207,20 @@ export class CampaignService {
         data: emailsData,
       });
 
-      // c) Insert Outbox Events
+      // c) Link Attachments if provided
+      if (input.attachmentIds && input.attachmentIds.length > 0) {
+        await tx.attachment.updateMany({
+          where: {
+            id: { in: input.attachmentIds },
+            user_id: userId,
+          },
+          data: {
+            campaign_id: campaignId,
+          },
+        });
+      }
+
+      // d) Insert Outbox Events
       await tx.outboxEvent.createMany({
         data: outboxEventsData,
       });

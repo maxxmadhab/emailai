@@ -30,11 +30,18 @@ describe('Phase 1 E2E: Real Ethereal Senders & Tenant Scoping', () => {
   const sendersStore: any[] = [];
   const usersStore: any[] = [];
 
+  beforeAll(() => {
+    process.env.ADMIN_EMAILS = 'usera.founder@example.com';
+    vi.spyOn(prismaModule, 'getPrisma').mockReturnValue(mockPrisma);
+  });
+
   const mockPrisma: any = {
     user: {
       upsert: vi.fn().mockImplementation(({ create }) => {
-        usersStore.push(create);
-        return Promise.resolve(create);
+        const role = (process.env.ADMIN_EMAILS || '').includes(create.email) ? 'admin' : (create.role || 'user');
+        const user = { ...create, role };
+        usersStore.push(user);
+        return Promise.resolve(user);
       }),
       findUnique: vi.fn().mockImplementation(({ where }) => {
         return Promise.resolve(usersStore.find((u) => u.id === where.id) || null);
@@ -59,7 +66,7 @@ describe('Phase 1 E2E: Real Ethereal Senders & Tenant Scoping', () => {
         return Promise.resolve(record);
       }),
       findMany: vi.fn().mockImplementation(({ where, skip = 0, take = 20 }) => {
-        const filtered = sendersStore.filter((s) => s.user_id === where.user_id);
+        const filtered = where?.user_id ? sendersStore.filter((s) => s.user_id === where.user_id) : sendersStore;
         const sliced = filtered.slice(skip, skip + take);
         return Promise.resolve(
           sliced.map((s) => ({
@@ -78,15 +85,12 @@ describe('Phase 1 E2E: Real Ethereal Senders & Tenant Scoping', () => {
         );
       }),
       count: vi.fn().mockImplementation(({ where }) => {
-        return Promise.resolve(sendersStore.filter((s) => s.user_id === where.user_id).length);
+        const filtered = where?.user_id ? sendersStore.filter((s) => s.user_id === where.user_id) : sendersStore;
+        return Promise.resolve(filtered.length);
       }),
     },
     $queryRaw: vi.fn().mockResolvedValue([{ 1: 1 }]),
   };
-
-  beforeAll(() => {
-    vi.spyOn(prismaModule, 'getPrisma').mockReturnValue(mockPrisma);
-  });
 
   it('Step 1: Health check responds properly', async () => {
     const res = await request(app).get('/health');
@@ -104,7 +108,7 @@ describe('Phase 1 E2E: Real Ethereal Senders & Tenant Scoping', () => {
     expect(ethereal1.user).toBeDefined();
     expect(ethereal2.user).toBeDefined();
 
-    // User A registers Sender 1
+    // User A (admin) registers Sender 1
     const res1 = await request(app)
       .post('/api/senders')
       .set('Authorization', `Bearer ${tokenA}`)
@@ -124,7 +128,7 @@ describe('Phase 1 E2E: Real Ethereal Senders & Tenant Scoping', () => {
     expect(res1.body.data.name).toBe('Ethereal Sender 1');
     expect(res1.body.data.password).toBeUndefined();
 
-    // User A registers Sender 2
+    // User A (admin) registers Sender 2
     const res2 = await request(app)
       .post('/api/senders')
       .set('Authorization', `Bearer ${tokenA}`)
@@ -136,14 +140,14 @@ describe('Phase 1 E2E: Real Ethereal Senders & Tenant Scoping', () => {
         secure: ethereal2.smtp.secure,
         username: ethereal2.user,
         password: ethereal2.pass,
-        hourly_limit: 100,
+        hourly_limit: 50,
       });
 
     expect(res2.status).toBe(201);
     expect(res2.body.data.email).toBe(ethereal2.user);
   }, 30000);
 
-  it('Step 3: User A lists senders and sees both', async () => {
+  it('Step 3: User A (admin) lists senders and sees both with admin fields', async () => {
     const listRes = await request(app)
       .get('/api/senders')
       .set('Authorization', `Bearer ${tokenA}`);
@@ -151,16 +155,37 @@ describe('Phase 1 E2E: Real Ethereal Senders & Tenant Scoping', () => {
     expect(listRes.status).toBe(200);
     expect(listRes.body.items).toHaveLength(2);
     expect(listRes.body.pagination.total).toBe(2);
+    expect(listRes.body.items[0].host).toBeDefined();
   });
 
-  it('Step 4: User B lists senders and sees NONE (Tenant Isolation verified)', async () => {
+  it('Step 4: User B (non-admin) lists senders and sees shared senders safely without credentials, cannot create', async () => {
+    // Non-admin sees shared senders for compose dropdown
     const listRes = await request(app)
       .get('/api/senders')
       .set('Authorization', `Bearer ${tokenB}`);
 
     expect(listRes.status).toBe(200);
-    expect(listRes.body.items).toHaveLength(0);
-    expect(listRes.body.pagination.total).toBe(0);
+    expect(listRes.body.items).toHaveLength(2);
+    // Credentials stripped for non-admin
+    expect(listRes.body.items[0].host).toBeUndefined();
+    expect(listRes.body.items[0].port).toBeUndefined();
+    expect(listRes.body.items[0].password).toBeUndefined();
+
+    // Non-admin cannot create senders
+    const createRes = await request(app)
+      .post('/api/senders')
+      .set('Authorization', `Bearer ${tokenB}`)
+      .send({
+        name: 'Hacker Sender',
+        email: 'hacker@example.com',
+        host: 'smtp.ethereal.email',
+        port: 587,
+        secure: false,
+        username: 'hacker',
+        password: 'password',
+        hourly_limit: 100,
+      });
+    expect(createRes.status).toBe(403);
   });
 
   it('Step 5: Bad SMTP credentials are authenticated against server and rejected', async () => {

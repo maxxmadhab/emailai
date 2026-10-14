@@ -20,6 +20,8 @@ describe('Campaign & Email API Endpoints', () => {
     name: 'Sender A',
     email: 'senderA@ethereal.email',
     hourly_limit: 50,
+    min_delay_seconds: 2,
+    is_shared: false,
   };
 
   const emailsDb: any[] = [];
@@ -32,7 +34,10 @@ describe('Campaign & Email API Endpoints', () => {
     },
     sender: {
       findFirst: vi.fn().mockImplementation(({ where }) => {
-        if (where.id === senderA.id && where.user_id === userA.id) {
+        const matchesUser =
+          where.user_id === userA.id ||
+          where.OR?.some((cond: any) => cond.user_id === userA.id || (cond.is_shared && senderA.is_shared));
+        if (where.id === senderA.id && matchesUser) {
           return Promise.resolve(senderA);
         }
         return Promise.resolve(null);
@@ -50,13 +55,25 @@ describe('Campaign & Email API Endpoints', () => {
         return Promise.resolve({ count: data.length });
       }),
       count: vi.fn().mockImplementation(({ where }) => {
+        const matchesStatus = (s: string) => {
+          if (!where.status) return true;
+          if (typeof where.status === 'string') return s === where.status;
+          if (where.status.in && Array.isArray(where.status.in)) return where.status.in.includes(s);
+          return false;
+        };
         return Promise.resolve(
-          emailsDb.filter((e) => e.user_id === where.user_id && e.status === where.status).length
+          emailsDb.filter((e) => e.user_id === where.user_id && matchesStatus(e.status)).length
         );
       }),
       findMany: vi.fn().mockImplementation(({ where, skip = 0, take = 20 }) => {
+        const matchesStatus = (s: string) => {
+          if (!where.status) return true;
+          if (typeof where.status === 'string') return s === where.status;
+          if (where.status.in && Array.isArray(where.status.in)) return where.status.in.includes(s);
+          return false;
+        };
         const filtered = emailsDb.filter(
-          (e) => e.user_id === where.user_id && e.status === where.status
+          (e) => e.user_id === where.user_id && matchesStatus(e.status)
         );
         return Promise.resolve(filtered.slice(skip, skip + take));
       }),

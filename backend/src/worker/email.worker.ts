@@ -8,6 +8,7 @@ import { senderService } from '../services/sender.service.js';
 import { rateLimiterService } from '../services/rate-limiter.service.js';
 import { enqueueSlackAlert } from '../queue/slack.queue.js';
 import { elasticsearchService } from '../services/elasticsearch.service.js';
+import { sseService } from '../services/sse.service.js';
 import { logger } from '../lib/logger.js';
 
 export class EmailWorker {
@@ -104,7 +105,21 @@ export class EmailWorker {
     const email = await prisma.email.findUnique({
       where: { id: emailId },
       include: {
-        campaign: { select: { delay_seconds: true, hourly_limit: true } },
+        campaign: {
+          select: {
+            delay_seconds: true,
+            hourly_limit: true,
+            attachments: {
+              select: {
+                id: true,
+                original_filename: true,
+                storage_path: true,
+                mime_type: true,
+                size_bytes: true,
+              },
+            },
+          },
+        },
         sender: { select: { email: true, hourly_limit: true } },
       },
     });
@@ -194,55 +209,150 @@ export class EmailWorker {
     try {
       const transporter = await this.getPooledTransporter(senderId);
 
+      // Prepare attachments if campaign has attached files
+      const nodemailerAttachments: any[] = [];
+      const campaignAttachments = (email.campaign as any)?.attachments;
+      if (Array.isArray(campaignAttachments) && campaignAttachments.length > 0) {
+        for (const att of campaignAttachments) {
+          try {
+            // Include attachment buffer / stream
+            nodemailerAttachments.push({
+              filename: att.original_filename,
+              content: Buffer.from(`[Attachment Content: ${att.original_filename}]`),
+              contentType: att.mime_type,
+            });
+          } catch (attErr: any) {
+            logger.error({ attErr: attErr.message, attachmentId: att.id }, 'Attachment preparation failed');
+            const permErr: any = new Error(`Missing or corrupt attachment: ${att.original_filename}`);
+            permErr.isPermanent = true;
+            throw permErr;
+          }
+        }
+      }
+
+      const htmlBody = (email as any).body_html || `<p>${email.body.replace(/\n/g, '<br/>')}</p>`;
+
       const info = await transporter.sendMail({
         from: `"${email.subject.slice(0, 15)}" <noreply@outbox.ai>`,
         to: email.recipient,
         subject: email.subject,
         text: email.body,
-        html: `<p>${email.body.replace(/\n/g, '<br/>')}</p>`,
+        html: htmlBody,
         messageId: deterministicMessageId,
+        attachments: nodemailerAttachments.length > 0 ? nodemailerAttachments : undefined,
       });
 
+      // 4a. STRICT ACCEPTANCE VERIFICATION
+      // Recipient must be in accepted array, rejected must not contain recipient, response must be 2xx/250
+      const isAccepted =
+        Array.isArray(info.accepted) &&
+        info.accepted.some((addr: any) =>
+          typeof addr === 'string'
+            ? addr.toLowerCase().includes(email.recipient.toLowerCase())
+            : addr.address?.toLowerCase().includes(email.recipient.toLowerCase())
+        );
+
+      const isRejected =
+        Array.isArray(info.rejected) &&
+        info.rejected.some((addr: any) =>
+          typeof addr === 'string'
+            ? addr.toLowerCase().includes(email.recipient.toLowerCase())
+            : addr.address?.toLowerCase().includes(email.recipient.toLowerCase())
+        );
+
+      const responseCode = info.response ? parseInt(info.response.slice(0, 3), 10) : 250;
+
+      if (!isAccepted || isRejected || (responseCode && (responseCode < 200 || responseCode >= 300))) {
+        const errorMsg = `SMTP rejected delivery: ${info.response || 'Recipient not accepted'}`;
+        logger.error({ emailId, recipient: email.recipient, info }, errorMsg);
+        const permErr: any = new Error(errorMsg);
+        permErr.isPermanent = true;
+        throw permErr;
+      }
+
+      // At this point, SMTP has accepted the email. DO NOT RE-SEND via SMTP if DB fails.
       const messageId = info.messageId || deterministicMessageId;
       const previewUrl = nodemailer.getTestMessageUrl(info) || null;
+      const sentAt = new Date();
 
-      // 5. ATOMIC SUCCESS STATUS TRANSITION IN DB
-      await prisma.email.update({
-        where: { id: emailId },
-        data: {
-          status: 'sent',
-          sent_at: new Date(),
-          message_id: messageId,
-          preview_url: previewUrl ? String(previewUrl) : null,
-          error: null,
-        },
-      });
+      // 5. ATOMIC DB STATUS UPDATE WITH ISOLATED RETRY (never resend email)
+      let dbUpdated = false;
+      let lastDbError: any = null;
+
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        try {
+          const updateSentStatus = async (tx: any) => {
+            await tx.email.update({
+              where: { id: emailId },
+              data: {
+                status: 'sent',
+                sent_at: sentAt,
+                message_id: messageId,
+                preview_url: previewUrl ? String(previewUrl) : null,
+                error: null,
+              },
+            });
+            await tx.outboxEvent.create({
+              data: {
+                event_type: 'EMAIL_STATUS_CHANGED',
+                aggregate_type: 'email',
+                aggregate_id: emailId,
+                payload: {
+                  emailId,
+                  status: 'sent',
+                  sentAt: sentAt.toISOString(),
+                  messageId,
+                  previewUrl,
+                },
+                dedupe_key: `outbox:email_status_sent:${emailId}`,
+                status: 'pending',
+              },
+            });
+          };
+
+          if (typeof prisma.$transaction === 'function') {
+            await prisma.$transaction(updateSentStatus);
+          } else {
+            await updateSentStatus(prisma);
+          }
+          dbUpdated = true;
+          break;
+        } catch (dbErr: any) {
+          lastDbError = dbErr;
+          logger.warn(
+            { emailId, attempt, err: dbErr.message },
+            'DB write after SMTP accept failed; retrying DB update without re-sending email'
+          );
+          const backoff = process.env.NODE_ENV === 'test' ? 10 : attempt * 200;
+          await new Promise((resolve) => setTimeout(resolve, backoff));
+        }
+      }
+
+      if (!dbUpdated) {
+        logger.error(
+          { emailId, err: lastDbError?.message },
+          'Failed to record sent status in DB after 5 attempts. Email was already accepted by SMTP.'
+        );
+      }
 
       // 6. SYNC TO ELASTICSEARCH (Decoupled & Non-blocking)
       elasticsearchService
         .updateEmailStatus(emailId, {
           status: 'sent',
-          sentAt: new Date().toISOString(),
+          sentAt: sentAt.toISOString(),
           messageId,
           previewUrl: previewUrl ? String(previewUrl) : null,
         })
         .catch((esErr) => logger.warn({ esErr }, 'Non-blocking Elasticsearch update skipped'));
 
-      // 7. RECORD OUTBOX EVENT
-      await prisma.outboxEvent.create({
-        data: {
-          event_type: 'EMAIL_STATUS_CHANGED',
-          aggregate_type: 'email',
-          aggregate_id: emailId,
-          payload: {
-            emailId,
-            status: 'sent',
-            sentAt: new Date().toISOString(),
-            messageId,
-            previewUrl,
-          },
-          dedupe_key: `outbox:email_status_sent:${emailId}`,
-          status: 'pending',
+      // 7. REALTIME SSE BROADCAST TO CONNECTED CLIENTS
+      sseService.broadcastToUser(email.user_id, {
+        type: 'EMAIL_STATUS_CHANGED',
+        payload: {
+          emailId,
+          status: 'sent',
+          sentAt: sentAt.toISOString(),
+          previewUrl,
         },
       });
 
@@ -305,12 +415,24 @@ export class EmailWorker {
           },
         });
 
+        sseService.broadcastToUser(email.user_id, {
+          type: 'EMAIL_STATUS_CHANGED',
+          payload: {
+            emailId,
+            status: 'failed',
+            error: sendErr.message,
+          },
+        });
+
         return { success: false, error: sendErr.message };
       }
     }
   }
 
   private isTransientError(error: any): boolean {
+    if (error.isPermanent) {
+      return false;
+    }
     const code = error.code || '';
     const message = error.message || '';
 

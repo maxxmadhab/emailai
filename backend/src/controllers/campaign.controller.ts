@@ -10,11 +10,13 @@ const createCampaignSchema = z.object({
   sender_id: z.string().uuid('Invalid sender ID format'),
   name: z.string().optional(),
   subject: z.string().min(1, 'Subject is required').max(300),
-  body: z.string().min(1, 'Email body is required'),
+  body: z.string().optional(),
+  body_html: z.string().optional(),
   recipients: z.array(z.string().email()).optional(),
   delay_seconds: z.coerce.number().int().min(0).default(2),
   hourly_limit: z.coerce.number().int().positive().optional(),
   start_time: z.string().optional(),
+  attachmentIds: z.array(z.string().uuid()).optional(),
 });
 
 export class CampaignController {
@@ -114,11 +116,24 @@ export class CampaignController {
 
       const startTime = req.body.start_time || req.body.scheduled_start_at;
 
+      let attachmentIds: string[] | undefined = undefined;
+      if (Array.isArray(req.body.attachmentIds)) {
+        attachmentIds = req.body.attachmentIds;
+      } else if (typeof req.body.attachmentIds === 'string') {
+        try {
+          const parsed = JSON.parse(req.body.attachmentIds);
+          if (Array.isArray(parsed)) attachmentIds = parsed;
+        } catch {
+          attachmentIds = req.body.attachmentIds.split(',').map((s: string) => s.trim()).filter(Boolean);
+        }
+      }
+
       const validated = createCampaignSchema.parse({
         ...req.body,
         sender_id: senderId,
         recipients: recipientsList,
         start_time: startTime,
+        attachmentIds,
       });
 
       const result = await campaignService.createCampaign(userId, {
@@ -126,11 +141,13 @@ export class CampaignController {
         name: validated.name,
         subject: validated.subject,
         body: validated.body,
+        body_html: validated.body_html,
         recipients: recipientsList,
         delay_seconds: validated.delay_seconds,
         hourly_limit: validated.hourly_limit,
         start_time: validated.start_time,
         idempotency_key: idempotencyKey,
+        attachmentIds: validated.attachmentIds,
       });
 
       return res.status(201).json({

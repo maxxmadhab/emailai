@@ -84,14 +84,28 @@ export const EmailList: React.FC<EmailListProps> = ({
               </div>
 
               {/* Status Pill Badge */}
-              {isScheduled ? (
+              {email.status === 'processing' ? (
+                <div className="shrink-0 flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-600 text-[11px] font-medium">
+                  <div className="w-2.5 h-2.5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                  <span>Sending</span>
+                </div>
+              ) : email.status === 'scheduled' ? (
                 <div className="shrink-0 flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#FFE8D6] text-[#D96B27] text-[11px] font-medium">
                   <Clock className="w-3 h-3 text-[#D96B27]" />
                   <span>{formatScheduledBadge(email.scheduled_at)}</span>
                 </div>
+              ) : email.status === 'failed' ? (
+                <div className="shrink-0 px-2.5 py-0.5 rounded-full bg-red-100 text-red-700 text-[11px] font-medium">
+                  Failed
+                </div>
               ) : (
-                <div className="shrink-0 px-2.5 py-0.5 rounded-full bg-[#EEEEEE] text-gray-600 text-[11px] font-medium">
-                  Sent
+                <div className="shrink-0 flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#EEEEEE] text-gray-600 text-[11px] font-medium">
+                  <span>Sent</span>
+                  {email.sent_at && (
+                    <span className="text-[10px] text-gray-400">
+                      • {new Date(email.sent_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  )}
                 </div>
               )}
 
@@ -114,9 +128,10 @@ export const EmailList: React.FC<EmailListProps> = ({
                   rel="noreferrer"
                   onClick={(e) => e.stopPropagation()}
                   title="View live Ethereal rendered email"
-                  className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-[#00A340] transition"
+                  className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-[#00A340] bg-[#E5F4EC] hover:bg-[#00A340] hover:text-white transition font-medium"
                 >
-                  <ExternalLink className="w-3.5 h-3.5" />
+                  <ExternalLink className="w-3 h-3" />
+                  <span>Preview</span>
                 </a>
               )}
 

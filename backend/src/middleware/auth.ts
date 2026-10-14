@@ -14,17 +14,22 @@ declare global {
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   try {
+    let token = '';
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
+    } else if (req.query?.token && typeof req.query.token === 'string') {
+      token = req.query.token;
+    }
+
+    if (!token) {
       return res.status(401).json({
         error: {
           code: 'UNAUTHORIZED',
-          message: 'Missing or malformed Authorization header. Expected Bearer <token>',
+          message: 'Missing or malformed Authorization. Expected Bearer <token> or ?token=<token>',
         },
       });
     }
-
-    const token = authHeader.split(' ')[1];
     let authUser: AuthUser;
 
     try {
@@ -39,31 +44,76 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       });
     }
 
-    // Upsert user on first authenticated request
+    // Upsert user and resolve role from database (never trust client)
+    const adminEmails = (process.env.ADMIN_EMAILS || '')
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+    const isAdminByEmail = adminEmails.includes(authUser.email.toLowerCase());
+
+    let userRole: 'admin' | 'user' = 'user';
+
     try {
       const prisma = getPrisma();
-      await prisma.user.upsert({
+      const existingUser = await prisma.user.findUnique({ where: { id: authUser.id } }).catch(() => null);
+
+      let initialRole: 'admin' | 'user' = 'user';
+      if (isAdminByEmail) {
+        initialRole = 'admin';
+      } else if (!existingUser) {
+        const count = await prisma.user.count().catch(() => 1);
+        if (count === 0) initialRole = 'admin';
+      }
+
+      const dbUser = await prisma.user.upsert({
         where: { id: authUser.id },
         update: {
           email: authUser.email,
           name: authUser.name || undefined,
           avatar_url: authUser.avatar_url || undefined,
+          ...(isAdminByEmail ? { role: 'admin' } : {}),
         },
         create: {
           id: authUser.id,
           email: authUser.email,
           name: authUser.name,
           avatar_url: authUser.avatar_url,
+          role: initialRole,
         },
       });
+
+      userRole = (dbUser as any)?.role === 'admin' ? 'admin' : 'user';
     } catch (dbErr) {
-      // In tests or if DB is offline, log error; if testing without DB mock, proceed or handle
       logger.error({ dbErr, userId: authUser.id }, 'Failed to upsert user in database');
+      if (isAdminByEmail) userRole = 'admin';
     }
 
+    authUser.role = userRole;
     req.user = authUser;
     next();
   } catch (error) {
     next(error);
   }
+}
+
+export function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) {
+    return res.status(401).json({
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Authentication required',
+      },
+    });
+  }
+
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({
+      error: {
+        code: 'FORBIDDEN',
+        message: 'Admin access required for this action',
+      },
+    });
+  }
+
+  next();
 }

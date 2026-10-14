@@ -6,6 +6,8 @@ import { createApp } from '../../src/app.js';
 import { mintTestToken } from '../../src/lib/jwt.js';
 import { EmailWorker } from '../../src/worker/email.worker.js';
 import * as prismaModule from '../../src/lib/prisma.js';
+import * as queueModule from '../../src/queue/email.queue.js';
+import { rateLimiterService } from '../../src/services/rate-limiter.service.js';
 
 describe('Phase 2 E2E: Scheduling Core, Persistence & Restart Verification', () => {
   const app = createApp();
@@ -13,6 +15,7 @@ describe('Phase 2 E2E: Scheduling Core, Persistence & Restart Verification', () 
   const user = {
     id: '77777777-7777-4777-8777-777777777777',
     email: 'persistence.founder@example.com',
+    role: 'admin',
   };
   const token = mintTestToken(user);
 
@@ -45,7 +48,7 @@ describe('Phase 2 E2E: Scheduling Core, Persistence & Restart Verification', () 
       }),
       findFirst: vi.fn().mockImplementation(({ where }) => {
         return Promise.resolve(
-          sendersStore.find((s) => s.id === where.id && s.user_id === where.user_id) || null
+          sendersStore.find((s) => s.id === where.id && (where.user_id ? s.user_id === where.user_id : true)) || null
         );
       }),
       findUnique: vi.fn().mockImplementation(({ where }) => {
@@ -64,13 +67,25 @@ describe('Phase 2 E2E: Scheduling Core, Persistence & Restart Verification', () 
         return Promise.resolve({ count: data.length });
       }),
       count: vi.fn().mockImplementation(({ where }) => {
+        const matchesStatus = (s: string) => {
+          if (!where.status) return true;
+          if (typeof where.status === 'string') return s === where.status;
+          if (where.status.in && Array.isArray(where.status.in)) return where.status.in.includes(s);
+          return false;
+        };
         return Promise.resolve(
-          emailsStore.filter((e) => e.user_id === where.user_id && e.status === where.status).length
+          emailsStore.filter((e) => e.user_id === where.user_id && matchesStatus(e.status)).length
         );
       }),
       findMany: vi.fn().mockImplementation(({ where, skip = 0, take = 50 }) => {
+        const matchesStatus = (s: string) => {
+          if (!where.status) return true;
+          if (typeof where.status === 'string') return s === where.status;
+          if (where.status.in && Array.isArray(where.status.in)) return where.status.in.includes(s);
+          return false;
+        };
         const filtered = emailsStore.filter(
-          (e) => e.user_id === where.user_id && e.status === where.status
+          (e) => e.user_id === where.user_id && matchesStatus(e.status)
         );
         return Promise.resolve(filtered.slice(skip, skip + take));
       }),
@@ -121,6 +136,15 @@ describe('Phase 2 E2E: Scheduling Core, Persistence & Restart Verification', () 
 
   beforeAll(async () => {
     vi.spyOn(prismaModule, 'getPrisma').mockReturnValue(mockPrisma);
+    vi.spyOn(queueModule, 'enqueueEmailJob').mockResolvedValue({ id: 'job-p2' } as any);
+    vi.spyOn(rateLimiterService, 'requestAdmission').mockResolvedValue({
+      decision: 'GRANTED',
+      currentCount: 1,
+      hourlyLimit: 50,
+      shouldAlert: false,
+      windowStartMs: Date.now(),
+      windowEndMs: Date.now() + 3600000,
+    });
     etherealAccount = await nodemailer.createTestAccount();
   }, 25000);
 

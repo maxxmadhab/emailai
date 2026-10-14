@@ -18,8 +18,16 @@ describe('Phase 3 E2E: Rate Limiting, Slack Notifications, Elasticsearch & Dashb
   const user = {
     id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
     email: 'phase3.founder@example.com',
+    role: 'user',
   };
   const token = mintTestToken(user);
+
+  const adminUser = {
+    id: 'admin-e2e-user',
+    email: 'admin@reachinbox.ai',
+    role: 'admin',
+  };
+  const adminToken = mintTestToken(adminUser);
 
   let etherealAccount: any;
   let senderId = '';
@@ -33,8 +41,14 @@ describe('Phase 3 E2E: Rate Limiting, Slack Notifications, Elasticsearch & Dashb
 
   const mockPrisma: any = {
     user: {
-      upsert: vi.fn().mockResolvedValue(user),
-      findUnique: vi.fn().mockResolvedValue(user),
+      upsert: vi.fn().mockImplementation(({ create }) => {
+        if (create.id === adminUser.id || create.email === adminUser.email) return Promise.resolve(adminUser);
+        return Promise.resolve(user);
+      }),
+      findUnique: vi.fn().mockImplementation(({ where }) => {
+        if (where.id === adminUser.id || where.email === adminUser.email) return Promise.resolve(adminUser);
+        return Promise.resolve(user);
+      }),
     },
     sender: {
       create: vi.fn().mockImplementation(({ data, select }) => {
@@ -50,7 +64,7 @@ describe('Phase 3 E2E: Rate Limiting, Slack Notifications, Elasticsearch & Dashb
       }),
       findFirst: vi.fn().mockImplementation(({ where }) => {
         return Promise.resolve(
-          sendersStore.find((s) => s.id === where.id && s.user_id === where.user_id) || null
+          sendersStore.find((s) => s.id === where.id && (where.user_id ? s.user_id === where.user_id : true)) || null
         );
       }),
       findUnique: vi.fn().mockImplementation(({ where }) => {
@@ -121,6 +135,14 @@ describe('Phase 3 E2E: Rate Limiting, Slack Notifications, Elasticsearch & Dashb
         outboxStore.push(data);
         return Promise.resolve(data);
       }),
+      findMany: vi.fn().mockImplementation(({ where }) => {
+        return Promise.resolve(outboxStore.filter((o) => !where?.status || o.status === where.status));
+      }),
+      update: vi.fn().mockImplementation(({ where, data }) => {
+        const o = outboxStore.find((ev) => ev.id === where.id);
+        if (o) Object.assign(o, data);
+        return Promise.resolve(o);
+      }),
     },
     slackConnection: {
       findUnique: vi.fn().mockImplementation(({ where }) => {
@@ -148,7 +170,7 @@ describe('Phase 3 E2E: Rate Limiting, Slack Notifications, Elasticsearch & Dashb
   it('Step 1: Set up sender with hourly limit of 5 emails/hour and 2s delay', async () => {
     const res = await request(app)
       .post('/api/senders')
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({
         name: 'Rate-Limited Sender',
         email: etherealAccount.user,
@@ -311,10 +333,19 @@ describe('Phase 3 E2E: Rate Limiting, Slack Notifications, Elasticsearch & Dashb
     const unauthRes = await request(app).get('/admin/queues');
     expect(unauthRes.status).toBe(401);
 
-    // Authenticated request accepted
-    const authRes = await request(app)
+    // Non-admin authenticated request rejected with 403 FORBIDDEN
+    const nonAdminRes = await request(app)
       .get('/admin/queues')
       .set('Authorization', `Bearer ${token}`);
+    expect(nonAdminRes.status).toBe(403);
+    expect(nonAdminRes.body.error.code).toBe('FORBIDDEN');
+
+    // Admin authenticated request accepted
+    process.env.ADMIN_EMAILS = 'admin@reachinbox.ai';
+
+    const authRes = await request(app)
+      .get('/admin/queues')
+      .set('Authorization', `Bearer ${adminToken}`);
 
     expect([200, 301, 302]).toContain(authRes.status);
   });

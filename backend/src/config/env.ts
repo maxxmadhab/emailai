@@ -25,6 +25,7 @@ const envSchema = z.object({
     .length(64, 'CREDENTIAL_ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes)'),
 
   // Redis
+  REDIS_URL: z.string().optional(),
   REDIS_HOST: z.string().default('localhost'),
   REDIS_PORT: z.coerce.number().default(6379),
   REDIS_PASSWORD: z.string().optional(),
@@ -35,11 +36,17 @@ const envSchema = z.object({
   // Worker
   WORKER_CONCURRENCY: z.coerce.number().default(5),
 
+  // Admin Role Bootstrap
+  ADMIN_EMAILS: z.string().optional().default(''),
+
   // Slack (Optional in Phase 1 & 2, required in Phase 3)
   SLACK_CLIENT_ID: z.string().optional(),
   SLACK_CLIENT_SECRET: z.string().optional(),
   SLACK_SIGNING_SECRET: z.string().optional(),
   SLACK_REDIRECT_URI: z.string().optional(),
+
+  // Frontend URL for callbacks
+  FRONTEND_URL: z.string().default('http://localhost:5173'),
 });
 
 export type Env = z.infer<typeof envSchema>;

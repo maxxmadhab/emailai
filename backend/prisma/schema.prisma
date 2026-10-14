@@ -12,12 +12,14 @@ model User {
   email            String            @unique
   name             String?
   avatar_url       String?
+  role             String            @default("user") // admin, user
   created_at       DateTime          @default(now())
   updated_at       DateTime          @updatedAt
 
   senders          Sender[]
   campaigns        Campaign[]
   emails           Email[]
+  attachments      Attachment[]
   idempotency_keys IdempotencyKey[]
   slack_connection SlackConnection?
 
@@ -35,6 +37,8 @@ model Sender {
   encrypted_username String     @db.Text
   encrypted_password String     @db.Text
   hourly_limit       Int        @default(50)
+  min_delay_seconds  Int        @default(2)
+  is_shared          Boolean    @default(true)
   status             String     @default("active") // active, invalid, rate_limited
   created_at         DateTime   @default(now())
   updated_at         DateTime   @updatedAt
@@ -55,6 +59,7 @@ model Campaign {
   name            String?
   subject         String
   body            String    @db.Text
+  body_html       String?   @db.Text
   delay_seconds   Int       @default(2)
   hourly_limit    Int       @default(50)
   status          String    @default("active")
@@ -65,6 +70,7 @@ model Campaign {
   user            User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
   sender          Sender    @relation(fields: [sender_id], references: [id], onDelete: Cascade)
   emails          Email[]
+  attachments     Attachment[]
 
   @@unique([user_id, idempotency_key])
   @@index([user_id])
@@ -80,6 +86,7 @@ model Email {
   recipient    String
   subject      String
   body         String    @db.Text
+  body_html    String?   @db.Text
   status       String    @default("scheduled") // scheduled, processing, sent, failed, cancelled
   scheduled_at DateTime
   sent_at      DateTime?
@@ -100,6 +107,25 @@ model Email {
   @@index([scheduled_at])
   @@index([campaign_id])
   @@map("emails")
+}
+
+model Attachment {
+  id                String    @id @default(uuid()) @db.Uuid
+  user_id           String    @db.Uuid
+  campaign_id       String?   @db.Uuid
+  original_filename String
+  storage_path      String
+  mime_type         String
+  size_bytes        Int
+  sha256            String
+  created_at        DateTime  @default(now())
+
+  user              User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  campaign          Campaign? @relation(fields: [campaign_id], references: [id], onDelete: SetNull)
+
+  @@index([user_id])
+  @@index([campaign_id])
+  @@map("attachments")
 }
 
 model OutboxEvent {

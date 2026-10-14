@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getPrisma } from '../lib/prisma.js';
 import { removeEmailJob } from '../queue/email.queue.js';
 import { elasticsearchService } from '../services/elasticsearch.service.js';
+import { sseService } from '../services/sse.service.js';
 
 const emailListQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -35,7 +36,7 @@ export class EmailController {
     req: Request,
     res: Response,
     next: NextFunction,
-    status: string,
+    status: string | string[],
     orderBy: Record<string, 'asc' | 'desc'>
   ) {
     try {
@@ -46,7 +47,7 @@ export class EmailController {
       const prisma = getPrisma();
       const where: any = {
         user_id: userId,
-        status,
+        status: Array.isArray(status) ? { in: status } : status,
         ...(query.campaign_id ? { campaign_id: query.campaign_id } : {}),
       };
 
@@ -84,15 +85,65 @@ export class EmailController {
   }
 
   getScheduledEmails(req: Request, res: Response, next: NextFunction) {
-    return this.getEmailsByStatus(req, res, next, 'scheduled', { scheduled_at: 'asc' });
+    // Scheduled tab includes both waiting ('scheduled') and actively dispatching ('processing')
+    return this.getEmailsByStatus(req, res, next, ['scheduled', 'processing'], { scheduled_at: 'asc' });
   }
 
   getSentEmails(req: Request, res: Response, next: NextFunction) {
-    return this.getEmailsByStatus(req, res, next, 'sent', { sent_at: 'desc' });
+    // Sent tab includes terminal sent ('sent') and terminal failed ('failed')
+    return this.getEmailsByStatus(req, res, next, ['sent', 'failed'], { sent_at: 'desc' });
   }
 
   getFailedEmails(req: Request, res: Response, next: NextFunction) {
     return this.getEmailsByStatus(req, res, next, 'failed', { updated_at: 'desc' });
+  }
+
+  /**
+   * GET /api/emails/counts
+   * Returns exact counts for scheduled (incl. processing), sent, and failed.
+   */
+  async getCounts(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user!.id;
+      const prisma = getPrisma();
+
+      const [scheduled, processing, sent, failed] = await Promise.all([
+        prisma.email.count({ where: { user_id: userId, status: 'scheduled' } }),
+        prisma.email.count({ where: { user_id: userId, status: 'processing' } }),
+        prisma.email.count({ where: { user_id: userId, status: 'sent' } }),
+        prisma.email.count({ where: { user_id: userId, status: 'failed' } }),
+      ]);
+
+      return res.status(200).json({
+        data: {
+          scheduled: scheduled + processing,
+          sent,
+          failed,
+          total: scheduled + processing + sent + failed,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/emails/events
+   * Server-Sent Events (SSE) stream for authenticated realtime updates.
+   */
+  subscribeEvents(req: Request, res: Response) {
+    const userId = req.user!.id;
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+
+    res.write('data: {"type":"CONNECTED"}\n\n');
+
+    sseService.addClient(userId, res);
   }
 
   /**
