@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Clock, Send, ChevronDown, Plus, LogOut, Settings, Radio } from 'lucide-react';
 import type { User } from '../types';
+import { getAuthToken } from '../lib/api';
 
 interface SidebarProps {
   user: User | null;
@@ -76,13 +77,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
             {user?.role === 'admin' && (
               <a
-                href="/admin/queues"
+                href={`${import.meta.env.VITE_API_URL || ''}/admin/queues?token=${encodeURIComponent(getAuthToken() || '')}`}
                 target="_blank"
                 rel="noreferrer"
                 className="w-full px-3 py-2 text-left hover:bg-gray-50 flex items-center gap-2 text-gray-700 block"
               >
-                <Radio className="w-3.5 h-3.5 text-gray-400" />
-                <span>BullMQ Queue Dashboard</span>
+                <Radio className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="font-medium text-emerald-700">BullMQ Queue Dashboard</span>
               </a>
             )}
             <div className="border-t border-gray-100 my-1"></div>

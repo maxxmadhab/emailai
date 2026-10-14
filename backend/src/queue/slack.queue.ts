@@ -1,5 +1,5 @@
 import { Queue, Worker, Job } from 'bullmq';
-import { getRedis } from '../lib/redis.js';
+import { createRedisClient } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { slackService } from '../services/slack.service.js';
 
@@ -21,7 +21,7 @@ let slackWorker: Worker<SlackAlertData> | null = null;
 
 export function getSlackQueue(): Queue<SlackAlertData> {
   if (!slackQueue) {
-    const redis = getRedis();
+    const redis = createRedisClient();
     slackQueue = new Queue<SlackAlertData>(SLACK_QUEUE_NAME, {
       connection: redis,
       defaultJobOptions: {
@@ -40,7 +40,7 @@ export function getSlackQueue(): Queue<SlackAlertData> {
 
 export function startSlackWorker(): Worker<SlackAlertData> {
   if (!slackWorker) {
-    const redis = getRedis();
+    const redis = createRedisClient();
     slackWorker = new Worker<SlackAlertData>(
       SLACK_QUEUE_NAME,
       async (job: Job<SlackAlertData>) => {

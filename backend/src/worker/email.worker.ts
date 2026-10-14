@@ -1,7 +1,7 @@
 import { Worker, Job } from 'bullmq';
 import nodemailer, { Transporter } from 'nodemailer';
 import { EMAIL_QUEUE_NAME, EmailJobData, enqueueEmailJob } from '../queue/email.queue.js';
-import { getRedis } from '../lib/redis.js';
+import { createRedisClient, getRedis } from '../lib/redis.js';
 import { getPrisma } from '../lib/prisma.js';
 import { getEnv } from '../config/env.js';
 import { senderService } from '../services/sender.service.js';
@@ -42,7 +42,7 @@ export class EmailWorker {
     if (this.worker) return this.worker;
 
     const env = getEnv();
-    const redis = getRedis();
+    const redis = createRedisClient();
 
     this.worker = new Worker<EmailJobData>(
       EMAIL_QUEUE_NAME,

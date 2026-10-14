@@ -4,38 +4,44 @@ import { logger } from './logger.js';
 
 let redisClient: Redis | null = null;
 
+export function createRedisClient(): Redis {
+  const env = getEnv();
+  let client: Redis;
+  if (env.REDIS_URL) {
+    client = new Redis(env.REDIS_URL, {
+      maxRetriesPerRequest: null, // Required by BullMQ
+      connectTimeout: 10000,
+      retryStrategy: (times) => {
+        return Math.min(times * 500, 5000);
+      },
+      lazyConnect: false,
+    });
+  } else {
+    client = new Redis({
+      host: env.REDIS_HOST,
+      port: env.REDIS_PORT,
+      password: env.REDIS_PASSWORD || undefined,
+      maxRetriesPerRequest: null, // Required by BullMQ
+      connectTimeout: 5000,
+      retryStrategy: (times) => {
+        return Math.min(times * 500, 5000);
+      },
+      lazyConnect: false,
+    });
+  }
+
+  client.on('error', (err) => {
+    logger.warn({ err: err.message }, 'Redis connection notice');
+  });
+
+  return client;
+}
+
 export function getRedis(): Redis {
   if (!redisClient) {
-    const env = getEnv();
-    if (env.REDIS_URL) {
-      redisClient = new Redis(env.REDIS_URL, {
-        maxRetriesPerRequest: null, // Required by BullMQ
-        connectTimeout: 5000,
-        retryStrategy: (times) => {
-          return Math.min(times * 500, 5000);
-        },
-        lazyConnect: true,
-      });
-    } else {
-      redisClient = new Redis({
-        host: env.REDIS_HOST,
-        port: env.REDIS_PORT,
-        password: env.REDIS_PASSWORD || undefined,
-        maxRetriesPerRequest: null, // Required by BullMQ
-        connectTimeout: 1500,
-        retryStrategy: (times) => {
-          return Math.min(times * 500, 5000);
-        },
-        lazyConnect: true,
-      });
-    }
-
+    redisClient = createRedisClient();
     redisClient.on('connect', () => {
       logger.info('Connected to Redis');
-    });
-
-    redisClient.on('error', (err) => {
-      logger.warn({ err: err.message }, 'Redis error');
     });
   }
 

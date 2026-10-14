@@ -1,5 +1,5 @@
 import { Queue, Job } from 'bullmq';
-import { getRedis } from '../lib/redis.js';
+import { createRedisClient } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 
 export const EMAIL_QUEUE_NAME = 'email-dispatch-queue';
@@ -16,7 +16,7 @@ let emailQueue: Queue<EmailJobData> | null = null;
 
 export function getEmailQueue(): Queue<EmailJobData> {
   if (!emailQueue) {
-    const redis = getRedis();
+    const redis = createRedisClient();
     emailQueue = new Queue<EmailJobData>(EMAIL_QUEUE_NAME, {
       connection: redis,
       defaultJobOptions: {

@@ -24,16 +24,27 @@ createBullBoard({
 // Admin authentication middleware:
 // Rejects unauthenticated requests with 401; rejects non-admins with 403
 function adminAuthGuard(req: Request, res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  let token = req.headers.authorization?.replace(/^Bearer\s+/i, '');
+  if (!token && typeof req.query.token === 'string') {
+    token = req.query.token;
+  }
+  if (!token && req.headers.referer && req.headers.referer.includes('token=')) {
+    try {
+      const url = new URL(req.headers.referer);
+      token = url.searchParams.get('token') || undefined;
+    } catch {}
+  }
+
+  if (!token) {
     return res.status(401).json({
       error: {
         code: 'UNAUTHORIZED_ADMIN',
-        message: 'Authentication required to access BullMQ queue admin dashboard',
+        message: 'Authentication required to access BullMQ queue admin dashboard. Append ?token=<admin_jwt> to the URL.',
       },
     });
   }
 
+  req.headers.authorization = `Bearer ${token}`;
   return requireAuth(req, res, () => {
     return requireAdmin(req, res, next);
   });
