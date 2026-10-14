@@ -147,6 +147,66 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             {loading ? 'Logging in...' : 'Login'}
           </button>
         </form>
+
+        {/* Demo Credentials Callout */}
+        <div className="mt-6 pt-5 border-t border-gray-100">
+          <div className="flex items-center justify-between mb-2.5">
+            <span className="text-xs font-semibold text-gray-700 uppercase tracking-wider">Demo Credentials</span>
+            <span className="text-[10px] bg-emerald-100 text-emerald-800 font-medium px-2 py-0.5 rounded-full">
+              Click to Auto-fill
+            </span>
+          </div>
+
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={() => {
+                setEmail('admin@reachinbox.ai');
+                setPassword('admin123');
+              }}
+              className="w-full text-left p-2.5 rounded-xl border border-emerald-200/80 bg-emerald-50/50 hover:bg-emerald-100/60 transition cursor-pointer flex items-center justify-between"
+            >
+              <div>
+                <div className="text-xs font-semibold text-emerald-950 flex items-center gap-1.5">
+                  <span>👑 Admin Account</span>
+                  <span className="text-[10px] font-normal text-emerald-700 bg-emerald-200/60 px-1.5 py-0.2 rounded">Full Access</span>
+                </div>
+                <div className="text-[11px] text-gray-600 font-mono mt-0.5">
+                  admin@reachinbox.ai
+                </div>
+              </div>
+              <div className="text-right">
+                <span className="text-[11px] text-gray-500 font-mono bg-white px-2 py-0.5 rounded border border-emerald-100">
+                  admin123
+                </span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setEmail('user@reachinbox.ai');
+                setPassword('user123');
+              }}
+              className="w-full text-left p-2.5 rounded-xl border border-gray-200 bg-gray-50 hover:bg-gray-100/70 transition cursor-pointer flex items-center justify-between"
+            >
+              <div>
+                <div className="text-xs font-semibold text-gray-800 flex items-center gap-1.5">
+                  <span>👤 Standard User</span>
+                  <span className="text-[10px] font-normal text-gray-500 bg-gray-200/60 px-1.5 py-0.2 rounded">Limited</span>
+                </div>
+                <div className="text-[11px] text-gray-600 font-mono mt-0.5">
+                  user@reachinbox.ai
+                </div>
+              </div>
+              <div className="text-right">
+                <span className="text-[11px] text-gray-500 font-mono bg-white px-2 py-0.5 rounded border border-gray-200">
+                  user123
+                </span>
+              </div>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

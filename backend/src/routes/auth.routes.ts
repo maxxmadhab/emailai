@@ -44,9 +44,22 @@ router.get('/me', requireAuth, async (req: Request, res: Response) => {
  * Also works if Google OAuth client ID is not configured on a local machine.
  */
 router.post('/demo-token', async (req: Request, res: Response) => {
-  const email = req.body?.email || 'oliver.brown@domain.io';
-  const name = req.body?.name || 'Oliver Brown';
-  const id = req.body?.id || 'd3b07384-d113-4670-8ce6-904d90956488';
+  const email = (req.body?.email || 'admin@reachinbox.ai').trim().toLowerCase();
+  const name = req.body?.name || (email.startsWith('admin') ? 'Admin User' : 'Oliver Brown');
+  
+  let id = req.body?.id;
+  if (!id) {
+    try {
+      const existing = await getPrisma().user.findUnique({ where: { email } });
+      if (existing) id = existing.id;
+    } catch {}
+    if (!id) {
+      if (email === 'admin@reachinbox.ai') id = 'aaaa0000-0000-4000-8000-000000000001';
+      else if (email === 'user@reachinbox.ai') id = 'bbbb0000-0000-4000-8000-000000000002';
+      else id = 'd3b07384-d113-4670-8ce6-904d90956488';
+    }
+  }
+
   const avatarUrl = req.body?.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80';
 
   const secret = getEnv().SUPABASE_JWT_SECRET;
@@ -72,17 +85,17 @@ router.post('/demo-token', async (req: Request, res: Response) => {
   let userRole = 'user';
   try {
     const prisma = getPrisma();
-    const adminEmails = (getEnv().ADMIN_EMAILS || '')
+    const adminEmails = (getEnv().ADMIN_EMAILS || 'admin@reachinbox.ai')
       .split(',')
       .map((e: string) => e.trim().toLowerCase())
       .filter(Boolean);
     const count = await prisma.user.count();
-    const shouldBeAdmin = adminEmails.includes(email.toLowerCase()) || count === 0;
+    const shouldBeAdmin = adminEmails.includes(email.toLowerCase()) || email === 'admin@reachinbox.ai' || count === 0;
     userRole = shouldBeAdmin ? 'admin' : 'user';
 
     await prisma.user.upsert({
       where: { id },
-      update: { email, name, avatar_url: avatarUrl, role: shouldBeAdmin ? 'admin' : undefined },
+      update: { email, name, avatar_url: avatarUrl, role: userRole },
       create: { id, email, name, avatar_url: avatarUrl, role: userRole },
     });
   } catch {
