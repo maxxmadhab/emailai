@@ -71,7 +71,7 @@ export function startSlackWorker(): Worker<SlackAlertData> {
 export async function enqueueSlackAlert(data: SlackAlertData): Promise<void> {
   const queue = getSlackQueue();
   // Deterministic job ID ensures at most one notification job per sender per window
-  const jobId = `slack_alert:${data.senderId}:${data.windowStart}`;
+  const jobId = `slack_alert_${data.senderId}_${data.windowStart}`.replace(/[:]/g, '_');
 
   try {
     await queue.add('send-slack-alert', data, {

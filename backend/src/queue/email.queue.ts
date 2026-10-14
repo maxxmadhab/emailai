@@ -47,7 +47,7 @@ export async function enqueueEmailJob(
   delayMs: number
 ): Promise<Job<EmailJobData> | null> {
   const queue = getEmailQueue();
-  const deterministicJobId = `email:${data.emailId}`;
+  const deterministicJobId = `email_${data.emailId}`;
 
   try {
     const job = await queue.add('dispatch-email', data, {
@@ -75,7 +75,7 @@ export async function enqueueEmailJob(
  */
 export async function removeEmailJob(emailId: string): Promise<boolean> {
   const queue = getEmailQueue();
-  const deterministicJobId = `email:${emailId}`;
+  const deterministicJobId = `email_${emailId}`;
 
   try {
     const job = await queue.getJob(deterministicJobId);
