@@ -3,11 +3,11 @@
   "version": "1.0.0",
   "description": "Express + TypeScript API and worker for ReachInbox email scheduler",
   "private": true,
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "node dist/src/index.js",
     "test": "vitest run --pool=forks --poolOptions.forks.singleFork",
     "test:watch": "vitest",
     "test:all": "vitest run --pool=forks --poolOptions.forks.singleFork",

@@ -37,4 +37,4 @@ EXPOSE 4000
 
 WORKDIR /app/backend
 
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/src/index.js"]
