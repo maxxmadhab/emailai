@@ -82,7 +82,7 @@ export class EmailWorker {
     logger.info({ emailId, recipient, attempt: job.attemptsMade + 1 }, 'Worker claiming email job');
 
     // 1. CONDITIONAL CLAIM (DB-level idempotency)
-    const claimResult = await prisma.email.updateMany({
+    const claimed = await prisma.email.updateMany({
       where: {
         id: emailId,
         status: 'scheduled',
@@ -93,7 +93,7 @@ export class EmailWorker {
       },
     });
 
-    if (claimResult.count === 0) {
+    if (claimed.count === 0) {
       logger.warn(
         { emailId },
         'Email was not in scheduled state (already claimed, cancelled, or sent). Skipping job.'
@@ -154,8 +154,8 @@ export class EmailWorker {
         data: { status: 'scheduled' },
       });
 
-      // Re-enqueue delayed job in BullMQ
-      await enqueueEmailJob(job.data, waitDelayMs);
+      // Re-enqueue delayed job in BullMQ with reschedule option to prevent ID collision
+      await enqueueEmailJob(job.data, waitDelayMs, { isReschedule: true });
       return { rescheduled: true, reason: 'SPACING_VIOLATION', waitDelayMs };
     }
 
@@ -198,8 +198,8 @@ export class EmailWorker {
         });
       }
 
-      // Re-enqueue job to next window
-      await enqueueEmailJob(job.data, delayUntilNextWindowMs);
+      // Re-enqueue job to next window with reschedule option to prevent ID collision
+      await enqueueEmailJob(job.data, delayUntilNextWindowMs, { isReschedule: true });
       return { rescheduled: true, reason: 'LIMIT_EXCEEDED', rescheduledAt: rescheduledAt.toISOString() };
     }
 
@@ -233,7 +233,7 @@ export class EmailWorker {
       const htmlBody = (email as any).body_html || `<p>${email.body.replace(/\n/g, '<br/>')}</p>`;
 
       const info = await transporter.sendMail({
-        from: `"${email.subject.slice(0, 15)}" <noreply@outbox.ai>`,
+        from: `"${(email.sender as any)?.name || 'ReachInbox'}" <${senderEmail}>`,
         to: email.recipient,
         subject: email.subject,
         text: email.body,

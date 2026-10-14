@@ -63,6 +63,9 @@ export class OutboxDispatcherService {
     const prisma = getPrisma();
 
     try {
+      if (typeof prisma.email?.findMany !== 'function') {
+        return 0;
+      }
       const STALL_THRESHOLD_MS = 30 * 1000; // 30 seconds
       const thresholdDate = new Date(Date.now() - STALL_THRESHOLD_MS);
 
@@ -124,7 +127,8 @@ export class OutboxDispatcherService {
             recipient: email.recipient,
             scheduledAt: email.scheduled_at.toISOString(),
           },
-          delayMs
+          delayMs,
+          { isReschedule: true }
         );
         recovered++;
       }

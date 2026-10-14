@@ -25,8 +25,8 @@ export function getEmailQueue(): Queue<EmailJobData> {
           type: 'exponential',
           delay: 2000,
         },
-        removeOnComplete: false, // Retain for audit / bull-board
-        removeOnFail: false,
+        removeOnComplete: { count: 1000 }, // Retain latest 1000 for audit / bull-board without permanent collision
+        removeOnFail: { count: 1000 },
       },
     });
 
@@ -39,15 +39,18 @@ export function getEmailQueue(): Queue<EmailJobData> {
 }
 
 /**
- * Enqueues a delayed dispatch job with deterministic jobId = email:<emailId>.
- * If a job with the same jobId already exists in delayed/waiting state, BullMQ prevents duplicates.
+ * Enqueues a delayed dispatch job with deterministic jobId = email_<emailId>.
+ * If a job is being rescheduled or if a collision occurs, a timestamp suffix is appended.
  */
 export async function enqueueEmailJob(
   data: EmailJobData,
-  delayMs: number
+  delayMs: number,
+  options?: { isReschedule?: boolean }
 ): Promise<Job<EmailJobData> | null> {
   const queue = getEmailQueue();
-  const deterministicJobId = `email_${data.emailId}`;
+  const deterministicJobId = options?.isReschedule
+    ? `email_${data.emailId}_${Date.now()}`
+    : `email_${data.emailId}`;
 
   try {
     const job = await queue.add('dispatch-email', data, {
@@ -63,8 +66,20 @@ export async function enqueueEmailJob(
   } catch (err: any) {
     // If BullMQ duplicate job error (job with ID already exists)
     if (err.message && err.message.includes('Job already exists')) {
-      logger.warn({ emailId: data.emailId }, 'Job already exists in queue, skipping duplicate enqueue');
-      return null;
+      try {
+        const fallbackJob = await queue.add('dispatch-email', data, {
+          jobId: `email_${data.emailId}_${Date.now()}`,
+          delay: Math.max(0, delayMs),
+        });
+        logger.info(
+          { jobId: fallbackJob.id, emailId: data.emailId, delayMs },
+          'Enqueued email dispatch job with unique fallback ID after collision'
+        );
+        return fallbackJob;
+      } catch (fallbackErr) {
+        logger.warn({ emailId: data.emailId }, 'Job already exists in queue, skipping duplicate enqueue');
+        return null;
+      }
     }
     throw err;
   }
