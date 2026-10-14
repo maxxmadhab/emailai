@@ -72,4 +72,24 @@ describe('Admin BullMQ Dashboard Protection', () => {
     // Bull-board redirects or serves HTML dashboard
     expect([200, 301, 302]).toContain(res.status);
   });
+
+  it('permits static assets without token so SPA JS/CSS bundles can load', async () => {
+    const res = await request(app).get('/admin/queues/static/js/main.js');
+    expect(res.status).not.toBe(401);
+  });
+
+  it('permits query token and sets admin_token cookie for subsequent SPA fetch calls', async () => {
+    const res = await request(app).get(`/admin/queues?token=${validAdminToken}`);
+    expect([200, 301, 302]).toContain(res.status);
+    const cookies = res.headers['set-cookie'];
+    expect(cookies).toBeDefined();
+    expect(cookies[0]).toContain('admin_token=');
+  });
+
+  it('permits authenticated requests via admin_token cookie', async () => {
+    const res = await request(app)
+      .get('/admin/queues')
+      .set('Cookie', `admin_token=${validAdminToken}`);
+    expect([200, 301, 302]).toContain(res.status);
+  });
 });

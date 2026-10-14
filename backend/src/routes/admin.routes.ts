@@ -23,12 +23,26 @@ createBullBoard({
 
 // Admin authentication middleware:
 // Rejects unauthenticated requests with 401; rejects non-admins with 403
+// Static UI assets (.js, .css, images, fonts) are served without blocking so the SPA can load.
 function adminAuthGuard(req: Request, res: Response, next: NextFunction) {
+  // Allow all static dashboard assets (.js, .css, images, fonts) without blocking
+  if (
+    req.path.includes('/static') ||
+    req.originalUrl.includes('/static') ||
+    /\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot)$/i.test(req.path)
+  ) {
+    return next();
+  }
+
   let token = req.headers.authorization?.replace(/^Bearer\s+/i, '');
   if (!token && typeof req.query.token === 'string') {
     token = req.query.token;
   }
-  if (!token && req.headers.referer && req.headers.referer.includes('token=')) {
+  if (!token && req.headers.cookie) {
+    const match = req.headers.cookie.match(/(?:^|;\s*)admin_token=([^;]+)/);
+    if (match) token = decodeURIComponent(match[1]);
+  }
+  if (!token && req.headers.referer) {
     try {
       const url = new URL(req.headers.referer);
       token = url.searchParams.get('token') || undefined;
@@ -41,6 +55,16 @@ function adminAuthGuard(req: Request, res: Response, next: NextFunction) {
         code: 'UNAUTHORIZED_ADMIN',
         message: 'Authentication required to access BullMQ queue admin dashboard. Append ?token=<admin_jwt> to the URL.',
       },
+    });
+  }
+
+  // Set cookie for subsequent internal SPA fetch calls if token came from query
+  if (req.query.token && typeof req.query.token === 'string') {
+    res.cookie('admin_token', req.query.token, {
+      path: '/admin',
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
     });
   }
 
