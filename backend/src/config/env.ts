@@ -46,7 +46,7 @@ const envSchema = z.object({
   SLACK_REDIRECT_URI: z.string().optional(),
 
   // Frontend URL for callbacks
-  FRONTEND_URL: z.string().default('http://localhost:5173'),
+  FRONTEND_URL: z.string().default('https://emailai-tau.vercel.app'),
 });
 
 export type Env = z.infer<typeof envSchema>;

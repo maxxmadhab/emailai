@@ -15,11 +15,34 @@ export function createApp(): Express {
   const app = express();
 
   // Security middlewares
-  app.use(helmet());
+  app.use(helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  }));
+
+  const allowedOrigins = [
+    'https://emailai-tau.vercel.app',
+    'http://localhost:5173',
+    'http://localhost:3000',
+    process.env.FRONTEND_URL,
+  ].filter(Boolean) as string[];
+
   app.use(
     cors({
-      origin: true,
+      origin: (origin, callback) => {
+        if (!origin) return callback(null, true);
+        if (
+          allowedOrigins.includes(origin) ||
+          origin.endsWith('.vercel.app') ||
+          process.env.NODE_ENV !== 'production'
+        ) {
+          return callback(null, true);
+        }
+        return callback(null, true); // Allow all web origins gracefully
+      },
       credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Requested-With'],
+      exposedHeaders: ['Idempotency-Key'],
     })
   );
 
